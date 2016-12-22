@@ -37,6 +37,7 @@
 #include <linux/srcu.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/hash.h>
 
 #include <asm/page.h>
 #include <asm/cmpxchg.h>
