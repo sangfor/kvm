@@ -1582,7 +1582,13 @@ int kvm_arch_write_log_dirty(struct kvm_vcpu *vcpu)
 {
 	if (kvm_x86_ops->write_log_dirty)
 		return kvm_x86_ops->write_log_dirty(vcpu);
+	return 0;
+}
 
+int kvm_cpu_dirty_log_size(void)
+{
+	if (kvm_x86_ops->cpu_dirty_log_size)
+		return kvm_x86_ops->cpu_dirty_log_size();
 	return 0;
 }
 
