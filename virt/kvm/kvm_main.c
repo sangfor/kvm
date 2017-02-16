@@ -2945,6 +2945,10 @@ static long kvm_vm_ioctl_check_extension_generic(struct kvm *kvm, long arg)
 	case KVM_CAP_MULTI_ADDRESS_SPACE:
 		return KVM_ADDRESS_SPACE_NUM;
 #endif
+#ifdef KVM_DIRTY_LOG_PAGE_OFFSET
+	case KVM_CAP_DIRTY_LOG_RING:
+		return KVM_DIRTY_LOG_PAGE_OFFSET;
+#endif
 	case KVM_CAP_MAX_VCPU_ID:
 		return KVM_MAX_VCPU_ID;
 	default:
@@ -2953,10 +2957,35 @@ static long kvm_vm_ioctl_check_extension_generic(struct kvm *kvm, long arg)
 	return kvm_vm_ioctl_check_extension(kvm, arg);
 }
 
+#ifdef KVM_DIRTY_LOG_PAGE_OFFSET
+static int kvm_vm_ioctl_enable_dirty_log_ring(struct kvm *kvm, u32 size)
+{
+	return -EINVAL;
+}
+
+static int kvm_vm_ioctl_reset_dirty_pages(struct kvm *kvm)
+{
+	return -EINVAL;
+}
+#endif
+
 int __attribute__((weak)) kvm_vm_ioctl_enable_cap(struct kvm *kvm,
 						  struct kvm_enable_cap *cap)
 {
 	return -EINVAL;
+}
+
+static int kvm_vm_ioctl_enable_cap_generic(struct kvm *kvm,
+					   struct kvm_enable_cap *cap)
+{
+	switch (cap->cap) {
+#ifdef KVM_DIRTY_LOG_PAGE_OFFSET
+	case KVM_CAP_DIRTY_LOG_RING:
+		return kvm_vm_ioctl_enable_dirty_log_ring(kvm, cap->args[0]);
+#endif
+	default:
+		return kvm_vm_ioctl_enable_cap(kvm, cap);
+	}
 }
 
 static long kvm_vm_ioctl(struct file *filp,
@@ -2978,7 +3007,7 @@ static long kvm_vm_ioctl(struct file *filp,
 		r = -EFAULT;
 		if (copy_from_user(&cap, argp, sizeof(cap)))
 			goto out;
-		r = kvm_vm_ioctl_enable_cap(kvm, &cap);
+		r = kvm_vm_ioctl_enable_cap_generic(kvm, &cap);
 		break;
 	}
 	case KVM_SET_USER_MEMORY_REGION: {
@@ -3129,6 +3158,11 @@ out_free_irq_routing:
 	case KVM_CHECK_EXTENSION:
 		r = kvm_vm_ioctl_check_extension_generic(kvm, arg);
 		break;
+#ifdef KVM_DIRTY_LOG_PAGE_OFFSET
+	case KVM_RESET_DIRTY_PAGES:
+		r = kvm_vm_ioctl_reset_dirty_pages(kvm);
+		break;
+#endif /* KVM_DIRTY_LOG_PAGE_OFFSET */
 	default:
 		r = kvm_arch_vm_ioctl(filp, ioctl, arg);
 	}

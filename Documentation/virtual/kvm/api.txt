@@ -168,6 +168,7 @@ Based on their initialization different VMs may have different capabilities.
 It is thus encouraged to use the vm ioctl to query for capabilities (available
 with KVM_CAP_CHECK_EXTENSION_VM on the vm fd)
 
+
 4.5 KVM_GET_VCPU_MMAP_SIZE
 
 Capability: basic
@@ -179,6 +180,18 @@ Returns: size of vcpu mmap area, in bytes
 The KVM_RUN ioctl (cf.) communicates with userspace via a shared
 memory region.  This ioctl returns the size of that region.  See the
 KVM_RUN documentation for details.
+
+Besides the size of the KVM_RUN communication region, other areas of
+the VCPU file descriptor can be mmap-ed, including:
+
+- if KVM_CAP_COALESCED_MMIO is available, a page at
+  KVM_COALESCED_MMIO_PAGE_OFFSET * PAGE_SIZE; for historical reasons,
+  this page is included in the result of KVM_GET_VCPU_MMAP_SIZE.
+  KVM_CAP_COALESCED_MMIO is not documented yet.
+
+- if KVM_CAP_DIRTY_LOG_RING is available, a number of pages at
+  KVM_DIRTY_LOG_PAGE_OFFSET * PAGE_SIZE.  For more information on
+  KVM_CAP_DIRTY_LOG_RING, see section 8.3.
 
 
 4.6 KVM_SET_MEMORY_REGION
@@ -4374,3 +4387,86 @@ Parameters: none
 This capability indicates if the flic device will be able to get/set the
 AIS states for migration via the KVM_DEV_FLIC_AISM_ALL attribute and allows
 to discover this without having to create a flic device.
+
+8.14 KVM_CAP_DIRTY_LOG_RING
+
+Architectures: x86
+Parameters: args[0] - size of the dirty log ring
+
+Kernel is capable of tracking dirty memory using rings, which
+are stored in memory regions that can be mmaped into userspace.
+
+There is one dirty ring per vcpu and one global ring.
+
+The dirty ring has the following structure.
+
+struct kvm_dirty_gfn {
+        __u32 pad;
+        __u32 slot; /* as_id | slot_id */
+        __u64 offset;
+};
+
+struct kvm_dirty_ring {
+       union {
+               struct {
+                       __u16 avail_index; /* set by kernel */
+                       __u16 fetch_index; /* set by userspace */
+               } indices;
+               struct kvm_dirty_gfn dirty_gfns[0];
+       };
+};
+
+The two indices in the ring buffer are free running counters.
+They are _not_ limited to the range 0..size-1 where "size" is
+the number of element of the ring buffer.  This makes it easy
+to compute the number of entries in the ring buffer, which is
+simply (u16)(ring->avail_index - ring->fetch_index).
+
+In pseudocode, processing the ring buffer looks like this:
+
+	idx = load-acquire(&ring->fetch_index);
+	while (idx != ring->avail_index) {
+		struct kvm_dirty_gfn *entry;
+		entry = &ring->dirty_gfns[idx & (size - 1)];
+		...
+
+		idx++;
+	}
+	ring->fetch_index = idx;
+
+Userspace calls KVM_ENABLE_CAP ioctl right after KVM_CREATE_VM ioctl
+to enable this capability for the new guest and set the size of the
+rings. The size of the ring must be a power of two.  The larger the
+ring buffer, the less likely the ring is full and the VM is forced to
+exit to userspace. The optimal size depends on the workload, but it is
+recommended that it be at least 64 KiB (4096 entries).
+
+After the capability is enabled, userspace mmaps the global ring
+buffer from the VM file descriptor.  The per-vcpu dirty ring instead
+is mmapped when the vcpu is created, similar to the kvm_run struct.
+The per-vcpu dirty ring is located at offset KVM_DIRTY_LOG_PAGE_OFFSET *
+PAGE_SIZE of the memory mapped region.
+
+To enable the dirty logging ring buffer, userspace calls
+KVM_SET_USER_MEMORY_REGION ioctls on all the user memory regions
+with KVM_MEM_LOG_DIRTY_PAGES bit set.
+
+To disable the dirty logging ring buffer, userspace calls
+KVM_SET_USER_MEMORY_REGION ioctls on all the user memory regions
+with KVM_MEM_LOG_DIRTY_PAGES bit clear.
+
+Once the dirty logging is enabled, userspace can start harvesting
+dirty pages.
+
+To harvest the dirty pages, userspace accesses the mmaped ring
+buffer to read the dirty GFNs up to avail_index and set the
+fetch_index accordingly. Harvest can be done when the guest is
+running or paused. Dirty pages don't need to be harvest all at
+once.  To rearm the dirty traps, userspace calls the VM ioctl
+KVM_RESET_DIRTY_PAGES.
+
+If one of the dirty lists is full, the guest will exit to userspace
+with the exit reason set to KVM_EXIT_DIRTY_LOG_FULL, and the
+KVM_RUN ioctl will return -EINTR. Once that happens, userspace
+should pause all the vcpus, then harvest all the dirty pages and
+rearm the dirty traps. It can unpause the guest after that.
