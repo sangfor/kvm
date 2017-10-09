@@ -201,7 +201,7 @@ static void vgic_mmio_change_active(struct kvm_vcpu *vcpu, struct vgic_irq *irq,
 	 * when accessing VGIC state from user space so irq->vcpu->cpu is
 	 * always -1.
 	 */
-	requester_vcpu = kvm_arm_get_running_vcpu();
+	requester_vcpu = kvm_get_running_vcpu();
 
 	/*
 	 * If this virtual IRQ was written into a list register, we

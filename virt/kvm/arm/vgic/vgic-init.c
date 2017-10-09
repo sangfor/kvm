@@ -307,7 +307,7 @@ int vgic_init(struct kvm *kvm)
 	 * when we just initialized the VGIC.
 	 */
 	preempt_disable();
-	vcpu = kvm_arm_get_running_vcpu();
+	vcpu = kvm_get_running_vcpu();
 	if (vcpu)
 		kvm_vgic_load(vcpu);
 	preempt_enable();
