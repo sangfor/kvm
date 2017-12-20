@@ -5257,14 +5257,13 @@ static void pt_disable_intercept_for_msr(bool flag)
 	}
 }
 
-static void vmx_disable_intercept_msr_x2apic(u32 msr, int type, bool apicv_active)
+static void vmx_disable_intercept_msr_x2apic(u32 msr, int type, bool apicv_only)
 {
-	if (apicv_active) {
-		__vmx_disable_intercept_for_msr(vmx_msr_bitmap_legacy_x2apic_apicv,
-				msr, type);
-		__vmx_disable_intercept_for_msr(vmx_msr_bitmap_longmode_x2apic_apicv,
-				msr, type);
-	} else {
+	__vmx_disable_intercept_for_msr(vmx_msr_bitmap_legacy_x2apic_apicv,
+					msr, type);
+	__vmx_disable_intercept_for_msr(vmx_msr_bitmap_longmode_x2apic_apicv,
+					msr, type);
+	if (!apicv_only) {
 		__vmx_disable_intercept_for_msr(vmx_msr_bitmap_legacy_x2apic,
 				msr, type);
 		__vmx_disable_intercept_for_msr(vmx_msr_bitmap_longmode_x2apic,
@@ -7149,7 +7148,6 @@ static __init int hardware_setup(void)
 	 * TPR reads and writes can be virtualized even if virtual interrupt
 	 * delivery is not in use.
 	 */
-	vmx_disable_intercept_msr_x2apic(0x808, MSR_TYPE_W, true);
 	vmx_disable_intercept_msr_x2apic(0x808, MSR_TYPE_R | MSR_TYPE_W, false);
 
 	/* EOI */
