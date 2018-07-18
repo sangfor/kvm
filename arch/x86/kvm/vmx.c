@@ -10636,9 +10636,9 @@ static void vmx_inject_page_fault_nested(struct kvm_vcpu *vcpu,
 static inline bool nested_vmx_prepare_msr_bitmap(struct kvm_vcpu *vcpu,
 						 struct vmcs12 *vmcs12);
 
-static void nested_get_vmcs12_pages(struct kvm_vcpu *vcpu,
-					struct vmcs12 *vmcs12)
+static void nested_get_vmcs12_pages(struct kvm_vcpu *vcpu)
 {
+	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct page *page;
 	u64 hpa;
@@ -11750,13 +11750,18 @@ static int check_vmentry_postreqs(struct kvm_vcpu *vcpu, struct vmcs12 *vmcs12,
 	return 0;
 }
 
-static int enter_vmx_non_root_mode(struct kvm_vcpu *vcpu)
+/*
+ * If p_exit_qual is NULL, this is being called from state restore (either
+ * kvm_set_nested_state or RSM).  Otherwise it's called from vmlaunch/vmresume.
+ */
+static int enter_vmx_non_root_mode(struct kvm_vcpu *vcpu, u32 *p_exit_qual)
 {
 	struct vcpu_vmx *vmx = to_vmx(vcpu);
 	struct vmcs12 *vmcs12 = get_vmcs12(vcpu);
+	bool from_vmentry = !!p_exit_qual;
 	u32 msr_entry_idx;
-	u32 exit_qual;
-	int r;
+	u32 dummy_exit_qual;
+	int r = 0;
 
 	enter_guest_mode(vcpu);
 
@@ -11770,17 +11775,27 @@ static int enter_vmx_non_root_mode(struct kvm_vcpu *vcpu)
 		vcpu->arch.tsc_offset += vmcs12->tsc_offset;
 
 	r = EXIT_REASON_INVALID_STATE;
-	if (prepare_vmcs02(vcpu, vmcs12, &exit_qual))
+	if (prepare_vmcs02(vcpu, vmcs12, from_vmentry ? p_exit_qual : &dummy_exit_qual))
 		goto fail;
 
-	nested_get_vmcs12_pages(vcpu, vmcs12);
+	if (from_vmentry) {
+		nested_get_vmcs12_pages(vcpu);
 
-	r = EXIT_REASON_MSR_LOAD_FAIL;
-	msr_entry_idx = nested_vmx_load_msr(vcpu,
-					    vmcs12->vm_entry_msr_load_addr,
-					    vmcs12->vm_entry_msr_load_count);
-	if (msr_entry_idx)
-		goto fail;
+		r = EXIT_REASON_MSR_LOAD_FAIL;
+		msr_entry_idx = nested_vmx_load_msr(vcpu,
+						    vmcs12->vm_entry_msr_load_addr,
+						    vmcs12->vm_entry_msr_load_count);
+		if (msr_entry_idx)
+			goto fail;
+	} else {
+		/*
+		 * The MMU is not initialized to point at the right entities yet and
+		 * "get pages" would need to read data from the guest (i.e. we will
+		 * need to perform gpa to hpa translation). Request a call
+		 * to nested_get_vmcs12_pages before the next VM-entry.
+		 */
+		kvm_make_request(KVM_REQ_GET_VMCS12_PAGES, vcpu);
+	}
 
 	/*
 	 * Note no nested_vmx_succeed or nested_vmx_fail here. At this point
@@ -11795,8 +11810,7 @@ fail:
 		vcpu->arch.tsc_offset -= vmcs12->tsc_offset;
 	leave_guest_mode(vcpu);
 	vmx_switch_vmcs(vcpu, &vmx->vmcs01);
-	nested_vmx_entry_failure(vcpu, vmcs12, r, exit_qual);
-	return 1;
+	return r;
 }
 
 /*
@@ -11873,10 +11887,11 @@ static int nested_vmx_run(struct kvm_vcpu *vcpu, bool launch)
 	 */
 
 	vmx->nested.nested_run_pending = 1;
-	ret = enter_vmx_non_root_mode(vcpu);
+	ret = enter_vmx_non_root_mode(vcpu, &exit_qual);
 	if (ret) {
+		nested_vmx_entry_failure(vcpu, vmcs12, ret, exit_qual);
 		vmx->nested.nested_run_pending = 0;
-		return ret;
+		return 1;
 	}
 
 	/*
@@ -12962,7 +12977,7 @@ static int vmx_pre_leave_smm(struct kvm_vcpu *vcpu, u64 smbase)
 
 	if (vmx->nested.smm.guest_mode) {
 		vcpu->arch.hflags &= ~HF_SMM_MASK;
-		ret = enter_vmx_non_root_mode(vcpu);
+		ret = enter_vmx_non_root_mode(vcpu, NULL);
 		vcpu->arch.hflags |= HF_SMM_MASK;
 		if (ret)
 			return ret;
@@ -13110,6 +13125,8 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 #endif
 
 	.setup_mce = vmx_setup_mce,
+
+	.get_vmcs12_pages = nested_get_vmcs12_pages,
 
 	.smi_allowed = vmx_smi_allowed,
 	.pre_enter_smm = vmx_pre_enter_smm,
