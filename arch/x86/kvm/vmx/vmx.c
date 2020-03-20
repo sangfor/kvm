@@ -1367,6 +1367,10 @@ void vmx_vcpu_load_vmcs(struct kvm_vcpu *vcpu, int cpu)
 		void *gdt = get_current_gdt_ro();
 		unsigned long sysenter_esp;
 
+		/*
+		 * Flush all EPTP/VPID contexts, the new pCPU may have stale
+		 * TLB entries from its previous association with the vCPU.
+		 */
 		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
 
 		/*
@@ -5479,7 +5483,7 @@ static int handle_invpcid(struct kvm_vcpu *vcpu)
 
 		if (kvm_get_active_pcid(vcpu) == operand.pcid) {
 			kvm_mmu_sync_roots(vcpu);
-			kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
+			kvm_make_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu);
 		}
 
 		for (i = 0; i < KVM_MMU_NUM_PREV_ROOTS; i++)
@@ -7936,6 +7940,7 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 	.set_rflags = vmx_set_rflags,
 
 	.tlb_flush_all = vmx_flush_tlb_all,
+	.tlb_flush_current = vmx_flush_tlb_current,
 	.tlb_flush_gva = vmx_flush_tlb_gva,
 	.tlb_flush_guest = vmx_flush_tlb_guest,
 
