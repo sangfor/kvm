@@ -123,27 +123,50 @@ static struct kvm_mmu_page *find_tdp_mmu_root_with_role(
 	return NULL;
 }
 
-static struct kvm_mmu_page *alloc_tdp_mmu_root(struct kvm_vcpu *vcpu,
-					       union kvm_mmu_page_role role)
+static union kvm_mmu_page_role page_role_for_level(struct kvm_vcpu *vcpu,
+						   int level)
+{
+	union kvm_mmu_page_role role;
+
+	role = vcpu->arch.mmu->mmu_role.base;
+	role.level = vcpu->arch.mmu->shadow_root_level;
+	role.direct = true;
+	role.gpte_is_8_bytes = true;
+	role.access = ACC_ALL;
+
+	return role;
+}
+
+static struct kvm_mmu_page *alloc_tdp_mmu_page(struct kvm_vcpu *vcpu, gfn_t gfn,
+					       int level)
+{
+	struct kvm_mmu_page *sp;
+
+	sp = kvm_mmu_memory_cache_alloc(&vcpu->arch.mmu_page_header_cache);
+	sp->spt = kvm_mmu_memory_cache_alloc(&vcpu->arch.mmu_shadow_page_cache);
+	set_page_private(virt_to_page(sp->spt), (unsigned long)sp);
+
+	sp->role.word = page_role_for_level(vcpu, level).word;
+	sp->gfn = gfn;
+	sp->tdp_mmu_page = true;
+
+	return sp;
+}
+
+static struct kvm_mmu_page *alloc_tdp_mmu_root(struct kvm_vcpu *vcpu)
 {
 	struct kvm_mmu_page *new_root;
 	struct kvm_mmu_page *root;
 
-	new_root = kvm_mmu_memory_cache_alloc(
-			&vcpu->arch.mmu_page_header_cache);
-	new_root->spt = kvm_mmu_memory_cache_alloc(
-			&vcpu->arch.mmu_shadow_page_cache);
-	set_page_private(virt_to_page(new_root->spt), (unsigned long)new_root);
-
-	new_root->role.word = role.word;
+	new_root = alloc_tdp_mmu_page(vcpu, 0,
+				      vcpu->arch.mmu->shadow_root_level);
 	new_root->root_count = 1;
-	new_root->gfn = 0;
-	new_root->tdp_mmu_page = true;
 
 	spin_lock(&vcpu->kvm->mmu_lock);
 
 	/* Check that no matching root exists before adding this one. */
-	root = find_tdp_mmu_root_with_role(vcpu->kvm, role);
+	root = find_tdp_mmu_root_with_role(vcpu->kvm,
+		page_role_for_level(vcpu, vcpu->arch.mmu->shadow_root_level));
 	if (root) {
 		get_tdp_mmu_root(vcpu->kvm, root);
 		spin_unlock(&vcpu->kvm->mmu_lock);
@@ -161,18 +184,12 @@ static struct kvm_mmu_page *alloc_tdp_mmu_root(struct kvm_vcpu *vcpu,
 static struct kvm_mmu_page *get_tdp_mmu_vcpu_root(struct kvm_vcpu *vcpu)
 {
 	struct kvm_mmu_page *root;
-	union kvm_mmu_page_role role;
-
-	role = vcpu->arch.mmu->mmu_role.base;
-	role.level = vcpu->arch.mmu->shadow_root_level;
-	role.direct = true;
-	role.gpte_is_8_bytes = true;
-	role.access = ACC_ALL;
 
 	spin_lock(&vcpu->kvm->mmu_lock);
 
 	/* Search for an already allocated root with the same role. */
-	root = find_tdp_mmu_root_with_role(vcpu->kvm, role);
+	root = find_tdp_mmu_root_with_role(vcpu->kvm,
+		page_role_for_level(vcpu, vcpu->arch.mmu->shadow_root_level));
 	if (root) {
 		get_tdp_mmu_root(vcpu->kvm, root);
 		spin_unlock(&vcpu->kvm->mmu_lock);
@@ -182,7 +199,7 @@ static struct kvm_mmu_page *get_tdp_mmu_vcpu_root(struct kvm_vcpu *vcpu)
 	spin_unlock(&vcpu->kvm->mmu_lock);
 
 	/* If there is no appropriate root, allocate one. */
-	root = alloc_tdp_mmu_root(vcpu, role);
+	root = alloc_tdp_mmu_root(vcpu);
 
 	return root;
 }
