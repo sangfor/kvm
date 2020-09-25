@@ -41,7 +41,11 @@ struct kvm_mmu_page {
 
 	/* Number of writes since the last time traversal visited this page.  */
 	atomic_t write_flooding_count;
+
+	bool tdp_mmu_page;
 };
+
+extern struct kmem_cache *mmu_page_header_cache;
 
 static inline struct kvm_mmu_page *to_shadow_page(hpa_t shadow_page)
 {
@@ -68,6 +72,11 @@ bool kvm_mmu_slot_gfn_write_protect(struct kvm *kvm,
 #define PT64_INDEX(address, level)\
 	(((address) >> PT64_LEVEL_SHIFT(level)) & ((1 << PT64_LEVEL_BITS) - 1))
 #define SHADOW_PT_INDEX(addr, level) PT64_INDEX(addr, level)
+
+#define ACC_EXEC_MASK    1
+#define ACC_WRITE_MASK   PT_WRITABLE_MASK
+#define ACC_USER_MASK    PT_USER_MASK
+#define ACC_ALL          (ACC_EXEC_MASK | ACC_WRITE_MASK | ACC_USER_MASK)
 
 /* Functions for interpreting SPTEs */
 kvm_pfn_t spte_to_pfn(u64 pte);
