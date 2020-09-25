@@ -83,5 +83,8 @@ kvm_pfn_t spte_to_pfn(u64 pte);
 bool is_mmio_spte(u64 spte);
 int is_shadow_present_pte(u64 pte);
 int is_last_spte(u64 pte, int level);
+bool is_dirty_spte(u64 spte);
 
+void kvm_flush_remote_tlbs_with_address(struct kvm *kvm, u64 start_gfn,
+					u64 pages);
 #endif /* __KVM_X86_MMU_INTERNAL_H */

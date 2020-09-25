@@ -310,8 +310,8 @@ static void kvm_flush_remote_tlbs_with_range(struct kvm *kvm,
 		kvm_flush_remote_tlbs(kvm);
 }
 
-static void kvm_flush_remote_tlbs_with_address(struct kvm *kvm,
-		u64 start_gfn, u64 pages)
+void kvm_flush_remote_tlbs_with_address(struct kvm *kvm, u64 start_gfn,
+					u64 pages)
 {
 	struct kvm_tlb_range range;
 
@@ -819,7 +819,7 @@ static bool is_accessed_spte(u64 spte)
 			     : !is_access_track_spte(spte);
 }
 
-static bool is_dirty_spte(u64 spte)
+bool is_dirty_spte(u64 spte)
 {
 	u64 dirty_mask = spte_shadow_dirty_mask(spte);
 
