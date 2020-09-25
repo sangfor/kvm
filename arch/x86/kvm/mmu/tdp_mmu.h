@@ -18,4 +18,7 @@ void kvm_tdp_mmu_zap_all(struct kvm *kvm);
 int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
 			   int level, gpa_t gpa, kvm_pfn_t pfn, bool prefault,
 			   bool lpage_disallowed);
+
+int kvm_tdp_mmu_zap_hva_range(struct kvm *kvm, unsigned long start,
+			      unsigned long end);
 #endif /* __KVM_X86_MMU_TDP_MMU_H */

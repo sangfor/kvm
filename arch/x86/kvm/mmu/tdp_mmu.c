@@ -60,7 +60,7 @@ bool is_tdp_mmu_root(struct kvm *kvm, hpa_t hpa)
 }
 
 static bool zap_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
-			  gfn_t start, gfn_t end);
+			  gfn_t start, gfn_t end, bool can_yield);
 
 static void free_tdp_mmu_root(struct kvm *kvm, struct kvm_mmu_page *root)
 {
@@ -73,7 +73,7 @@ static void free_tdp_mmu_root(struct kvm *kvm, struct kvm_mmu_page *root)
 
 	list_del(&root->link);
 
-	zap_gfn_range(kvm, root, 0, max_gfn);
+	zap_gfn_range(kvm, root, 0, max_gfn, false);
 
 	free_page((unsigned long)root->spt);
 	kmem_cache_free(mmu_page_header_cache, root);
@@ -361,9 +361,14 @@ static bool tdp_mmu_iter_cond_resched(struct kvm *kvm, struct tdp_iter *iter)
  * non-root pages mapping GFNs strictly within that range. Returns true if
  * SPTEs have been cleared and a TLB flush is needed before releasing the
  * MMU lock.
+ * If can_yield is true, will release the MMU lock and reschedule if the
+ * scheduler needs the CPU or there is contention on the MMU lock. If this
+ * function cannot yield, it will not release the MMU lock or reschedule and
+ * the caller must ensure it does not supply too large a GFN range, or the
+ * operation can cause a soft lockup.
  */
 static bool zap_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
-			  gfn_t start, gfn_t end)
+			  gfn_t start, gfn_t end, bool can_yield)
 {
 	struct tdp_iter iter;
 	bool flush_needed = false;
@@ -387,7 +392,10 @@ static bool zap_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
 		handle_changed_spte(kvm, as_id, iter.gfn, iter.old_spte, 0,
 				    iter.level);
 
-		flush_needed = !tdp_mmu_iter_cond_resched(kvm, &iter);
+		if (can_yield)
+			flush_needed = !tdp_mmu_iter_cond_resched(kvm, &iter);
+		else
+			flush_needed = true;
 	}
 	return flush_needed;
 }
@@ -410,7 +418,7 @@ bool kvm_tdp_mmu_zap_gfn_range(struct kvm *kvm, gfn_t start, gfn_t end)
 		 */
 		get_tdp_mmu_root(kvm, root);
 
-		flush = zap_gfn_range(kvm, root, start, end) || flush;
+		flush = zap_gfn_range(kvm, root, start, end, true) || flush;
 
 		put_tdp_mmu_root(kvm, root);
 	}
@@ -550,4 +558,66 @@ int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
 		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
 
 	return ret;
+}
+
+static int kvm_tdp_mmu_handle_hva_range(struct kvm *kvm, unsigned long start,
+		unsigned long end, unsigned long data,
+		int (*handler)(struct kvm *kvm, struct kvm_memory_slot *slot,
+			       struct kvm_mmu_page *root, gfn_t start,
+			       gfn_t end, unsigned long data))
+{
+	struct kvm_memslots *slots;
+	struct kvm_memory_slot *memslot;
+	struct kvm_mmu_page *root;
+	int ret = 0;
+	int as_id;
+
+	for_each_tdp_mmu_root(kvm, root) {
+		/*
+		 * Take a reference on the root so that it cannot be freed if
+		 * this thread releases the MMU lock and yields in this loop.
+		 */
+		get_tdp_mmu_root(kvm, root);
+
+		as_id = kvm_mmu_page_as_id(root);
+		slots = __kvm_memslots(kvm, as_id);
+		kvm_for_each_memslot(memslot, slots) {
+			unsigned long hva_start, hva_end;
+			gfn_t gfn_start, gfn_end;
+
+			hva_start = max(start, memslot->userspace_addr);
+			hva_end = min(end, memslot->userspace_addr +
+				      (memslot->npages << PAGE_SHIFT));
+			if (hva_start >= hva_end)
+				continue;
+			/*
+			 * {gfn(page) | page intersects with [hva_start, hva_end)} =
+			 * {gfn_start, gfn_start+1, ..., gfn_end-1}.
+			 */
+			gfn_start = hva_to_gfn_memslot(hva_start, memslot);
+			gfn_end = hva_to_gfn_memslot(hva_end + PAGE_SIZE - 1, memslot);
+
+			ret |= handler(kvm, memslot, root, gfn_start,
+				       gfn_end, data);
+		}
+
+		put_tdp_mmu_root(kvm, root);
+	}
+
+	return ret;
+}
+
+static int zap_gfn_range_hva_wrapper(struct kvm *kvm,
+				     struct kvm_memory_slot *slot,
+				     struct kvm_mmu_page *root, gfn_t start,
+				     gfn_t end, unsigned long unused)
+{
+	return zap_gfn_range(kvm, root, start, end, false);
+}
+
+int kvm_tdp_mmu_zap_hva_range(struct kvm *kvm, unsigned long start,
+			      unsigned long end)
+{
+	return kvm_tdp_mmu_handle_hva_range(kvm, start, end, 0,
+					    zap_gfn_range_hva_wrapper);
 }
