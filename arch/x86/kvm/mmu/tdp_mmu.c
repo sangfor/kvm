@@ -236,6 +236,24 @@ static void handle_changed_spte_acc_track(u64 old_spte, u64 new_spte, int level)
 		kvm_set_pfn_accessed(spte_to_pfn(old_spte));
 }
 
+static void handle_changed_spte_dlog(struct kvm *kvm, int as_id, gfn_t gfn,
+				    u64 old_spte, u64 new_spte, int level)
+{
+	bool pfn_changed;
+	struct kvm_memory_slot *slot;
+
+	if (level > PG_LEVEL_4K)
+		return;
+
+	pfn_changed = spte_to_pfn(old_spte) != spte_to_pfn(new_spte);
+
+	if ((!is_writable_pte(old_spte) || pfn_changed) &&
+	    is_writable_pte(new_spte)) {
+		slot = __gfn_to_memslot(__kvm_memslots(kvm, as_id), gfn);
+		mark_page_dirty_in_slot(slot, gfn);
+	}
+}
+
 /**
  * handle_changed_spte - handle bookkeeping associated with an SPTE change
  * @kvm: kvm instance
@@ -348,6 +366,7 @@ static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 {
 	__handle_changed_spte(kvm, as_id, gfn, old_spte, new_spte, level);
 	handle_changed_spte_acc_track(old_spte, new_spte, level);
+	handle_changed_spte_dlog(kvm, as_id, gfn, old_spte, new_spte, level);
 }
 
 #define for_each_tdp_pte_root(_iter, _root, _start, _end) \
@@ -685,6 +704,8 @@ static int age_gfn_range(struct kvm *kvm, struct kvm_memory_slot *slot,
 		*iter.sptep = new_spte;
 		__handle_changed_spte(kvm, as_id, iter.gfn, iter.old_spte,
 				      new_spte, iter.level);
+		handle_changed_spte_dlog(kvm, as_id, iter.gfn, iter.old_spte,
+					 new_spte, iter.level);
 		young = true;
 	}
 
