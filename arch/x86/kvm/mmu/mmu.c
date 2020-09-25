@@ -134,15 +134,6 @@ module_param(dbg, bool, 0644);
 #define SPTE_AD_WRPROT_ONLY_MASK (2ULL << 52)
 #define SPTE_MMIO_MASK (3ULL << 52)
 
-#define PT64_LEVEL_BITS 9
-
-#define PT64_LEVEL_SHIFT(level) \
-		(PAGE_SHIFT + (level - 1) * PT64_LEVEL_BITS)
-
-#define PT64_INDEX(address, level)\
-	(((address) >> PT64_LEVEL_SHIFT(level)) & ((1 << PT64_LEVEL_BITS) - 1))
-
-
 #define PT32_LEVEL_BITS 10
 
 #define PT32_LEVEL_SHIFT(level) \
@@ -191,8 +182,6 @@ module_param(dbg, bool, 0644);
 
 #define SPTE_HOST_WRITEABLE	(1ULL << PT_FIRST_AVAIL_BITS_SHIFT)
 #define SPTE_MMU_WRITEABLE	(1ULL << (PT_FIRST_AVAIL_BITS_SHIFT + 1))
-
-#define SHADOW_PT_INDEX(addr, level) PT64_INDEX(addr, level)
 
 /* make pte_list_desc fit well in cache line */
 #define PTE_LIST_EXT 3
@@ -346,7 +335,7 @@ void kvm_mmu_set_mmio_spte_mask(u64 mmio_value, u64 access_mask)
 }
 EXPORT_SYMBOL_GPL(kvm_mmu_set_mmio_spte_mask);
 
-static bool is_mmio_spte(u64 spte)
+bool is_mmio_spte(u64 spte)
 {
 	return (spte & SPTE_SPECIAL_MASK) == SPTE_MMIO_MASK;
 }
@@ -623,7 +612,7 @@ static int is_nx(struct kvm_vcpu *vcpu)
 	return vcpu->arch.efer & EFER_NX;
 }
 
-static int is_shadow_present_pte(u64 pte)
+int is_shadow_present_pte(u64 pte)
 {
 	return (pte != 0) && !is_mmio_spte(pte);
 }
@@ -633,7 +622,7 @@ static int is_large_pte(u64 pte)
 	return pte & PT_PAGE_SIZE_MASK;
 }
 
-static int is_last_spte(u64 pte, int level)
+int is_last_spte(u64 pte, int level)
 {
 	if (level == PG_LEVEL_4K)
 		return 1;
@@ -647,7 +636,7 @@ static bool is_executable_pte(u64 spte)
 	return (spte & (shadow_x_mask | shadow_nx_mask)) == shadow_x_mask;
 }
 
-static kvm_pfn_t spte_to_pfn(u64 pte)
+kvm_pfn_t spte_to_pfn(u64 pte)
 {
 	return (pte & PT64_BASE_ADDR_MASK) >> PAGE_SHIFT;
 }

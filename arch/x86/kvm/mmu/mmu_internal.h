@@ -60,4 +60,19 @@ void kvm_mmu_gfn_allow_lpage(struct kvm_memory_slot *slot, gfn_t gfn);
 bool kvm_mmu_slot_gfn_write_protect(struct kvm *kvm,
 				    struct kvm_memory_slot *slot, u64 gfn);
 
+#define PT64_LEVEL_BITS 9
+
+#define PT64_LEVEL_SHIFT(level) \
+		(PAGE_SHIFT + (level - 1) * PT64_LEVEL_BITS)
+
+#define PT64_INDEX(address, level)\
+	(((address) >> PT64_LEVEL_SHIFT(level)) & ((1 << PT64_LEVEL_BITS) - 1))
+#define SHADOW_PT_INDEX(addr, level) PT64_INDEX(addr, level)
+
+/* Functions for interpreting SPTEs */
+kvm_pfn_t spte_to_pfn(u64 pte);
+bool is_mmio_spte(u64 spte);
+int is_shadow_present_pte(u64 pte);
+int is_last_spte(u64 pte, int level);
+
 #endif /* __KVM_X86_MMU_INTERNAL_H */
