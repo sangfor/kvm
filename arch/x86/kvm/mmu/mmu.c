@@ -201,7 +201,7 @@ static u64 __read_mostly shadow_nx_mask;
 static u64 __read_mostly shadow_x_mask;	/* mutual exclusive with nx_mask */
 u64 __read_mostly shadow_user_mask;
 u64 __read_mostly shadow_accessed_mask;
-static u64 __read_mostly shadow_dirty_mask;
+u64 __read_mostly shadow_dirty_mask;
 static u64 __read_mostly shadow_mmio_value;
 static u64 __read_mostly shadow_mmio_access_mask;
 u64 __read_mostly shadow_present_mask;
@@ -324,7 +324,7 @@ inline bool spte_ad_enabled(u64 spte)
 	return (spte & SPTE_SPECIAL_MASK) != SPTE_AD_DISABLED_MASK;
 }
 
-static inline bool spte_ad_need_write_protect(u64 spte)
+inline bool spte_ad_need_write_protect(u64 spte)
 {
 	MMU_WARN_ON(is_mmio_spte(spte));
 	return (spte & SPTE_SPECIAL_MASK) != SPTE_AD_ENABLED_MASK;
@@ -1591,6 +1591,9 @@ static void kvm_mmu_write_protect_pt_masked(struct kvm *kvm,
 {
 	struct kvm_rmap_head *rmap_head;
 
+	if (kvm->arch.tdp_mmu_enabled)
+		kvm_tdp_mmu_clear_dirty_pt_masked(kvm, slot,
+				slot->base_gfn + gfn_offset, mask, true);
 	while (mask) {
 		rmap_head = __gfn_to_rmap(slot->base_gfn + gfn_offset + __ffs(mask),
 					  PG_LEVEL_4K, slot);
@@ -1617,6 +1620,9 @@ void kvm_mmu_clear_dirty_pt_masked(struct kvm *kvm,
 {
 	struct kvm_rmap_head *rmap_head;
 
+	if (kvm->arch.tdp_mmu_enabled)
+		kvm_tdp_mmu_clear_dirty_pt_masked(kvm, slot,
+				slot->base_gfn + gfn_offset, mask, false);
 	while (mask) {
 		rmap_head = __gfn_to_rmap(slot->base_gfn + gfn_offset + __ffs(mask),
 					  PG_LEVEL_4K, slot);
@@ -5954,6 +5960,8 @@ void kvm_mmu_slot_remove_write_access(struct kvm *kvm,
 	spin_lock(&kvm->mmu_lock);
 	flush = slot_handle_level(kvm, memslot, slot_rmap_write_protect,
 				start_level, KVM_MAX_HUGEPAGE_LEVEL, false);
+	if (kvm->arch.tdp_mmu_enabled)
+		flush = kvm_tdp_mmu_wrprot_slot(kvm, memslot, false) || flush;
 	spin_unlock(&kvm->mmu_lock);
 
 	/*
@@ -6034,6 +6042,7 @@ void kvm_arch_flush_remote_tlbs_memslot(struct kvm *kvm,
 	kvm_flush_remote_tlbs_with_address(kvm, memslot->base_gfn,
 					   memslot->npages);
 }
+EXPORT_SYMBOL_GPL(kvm_arch_flush_remote_tlbs_memslot);
 
 void kvm_mmu_slot_leaf_clear_dirty(struct kvm *kvm,
 				   struct kvm_memory_slot *memslot)
@@ -6042,6 +6051,8 @@ void kvm_mmu_slot_leaf_clear_dirty(struct kvm *kvm,
 
 	spin_lock(&kvm->mmu_lock);
 	flush = slot_handle_leaf(kvm, memslot, __rmap_clear_dirty, false);
+	if (kvm->arch.tdp_mmu_enabled)
+		flush = kvm_tdp_mmu_clear_dirty_slot(kvm, memslot) || flush;
 	spin_unlock(&kvm->mmu_lock);
 
 	/*
@@ -6063,6 +6074,8 @@ void kvm_mmu_slot_largepage_remove_write_access(struct kvm *kvm,
 	spin_lock(&kvm->mmu_lock);
 	flush = slot_handle_large_level(kvm, memslot, slot_rmap_write_protect,
 					false);
+	if (kvm->arch.tdp_mmu_enabled)
+		flush = kvm_tdp_mmu_wrprot_slot(kvm, memslot, true) || flush;
 	spin_unlock(&kvm->mmu_lock);
 
 	if (flush)
@@ -6077,6 +6090,8 @@ void kvm_mmu_slot_set_dirty(struct kvm *kvm,
 
 	spin_lock(&kvm->mmu_lock);
 	flush = slot_handle_all_level(kvm, memslot, __rmap_set_dirty, false);
+	if (kvm->arch.tdp_mmu_enabled)
+		flush = kvm_tdp_mmu_slot_set_dirty(kvm, memslot) || flush;
 	spin_unlock(&kvm->mmu_lock);
 
 	if (flush)

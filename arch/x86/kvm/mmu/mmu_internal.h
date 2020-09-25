@@ -89,6 +89,7 @@ bool kvm_mmu_slot_gfn_write_protect(struct kvm *kvm,
 extern u64 shadow_user_mask;
 extern u64 shadow_accessed_mask;
 extern u64 shadow_present_mask;
+extern u64 shadow_dirty_mask;
 
 #define ACC_EXEC_MASK    1
 #define ACC_WRITE_MASK   PT_WRITABLE_MASK
@@ -112,6 +113,7 @@ bool is_access_track_spte(u64 spte);
 bool is_accessed_spte(u64 spte);
 bool spte_ad_enabled(u64 spte);
 bool is_executable_pte(u64 spte);
+bool spte_ad_need_write_protect(u64 spte);
 
 void kvm_flush_remote_tlbs_with_address(struct kvm *kvm, u64 start_gfn,
 					u64 pages);

@@ -178,3 +178,21 @@ void tdp_iter_refresh_walk(struct tdp_iter *iter)
 	tdp_iter_start(iter, iter->pt_path[iter->root_level - 1],
 		       iter->root_level, goal_gfn);
 }
+
+/*
+ * Move on to the next SPTE, but do not move down into a child page table even
+ * if the current SPTE leads to one.
+ */
+void tdp_iter_next_no_step_down(struct tdp_iter *iter)
+{
+	bool done;
+
+	done = try_step_side(iter);
+	while (!done) {
+		if (!try_step_up(iter)) {
+			iter->valid = false;
+			break;
+		}
+		done = try_step_side(iter);
+	}
+}
