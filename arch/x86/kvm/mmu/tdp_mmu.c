@@ -722,3 +722,64 @@ int kvm_tdp_mmu_test_age_hva(struct kvm *kvm, unsigned long hva)
 	return kvm_tdp_mmu_handle_hva_range(kvm, hva, hva + 1, 0,
 					    test_age_gfn);
 }
+
+/*
+ * Handle the changed_pte MMU notifier for the TDP MMU.
+ * data is a pointer to the new pte_t mapping the HVA specified by the MMU
+ * notifier.
+ * Returns non-zero if a flush is needed before releasing the MMU lock.
+ */
+static int set_tdp_spte(struct kvm *kvm, struct kvm_memory_slot *slot,
+			struct kvm_mmu_page *root, gfn_t gfn, gfn_t unused,
+			unsigned long data)
+{
+	struct tdp_iter iter;
+	pte_t *ptep = (pte_t *)data;
+	kvm_pfn_t new_pfn;
+	u64 new_spte;
+	int need_flush = 0;
+	int as_id = kvm_mmu_page_as_id(root);
+
+	WARN_ON(pte_huge(*ptep));
+
+	new_pfn = pte_pfn(*ptep);
+
+	for_each_tdp_pte_root(iter, root, gfn, gfn + 1) {
+		if (iter.level != PG_LEVEL_4K)
+			continue;
+
+		if (!is_shadow_present_pte(iter.old_spte))
+			break;
+
+		*iter.sptep = 0;
+		handle_changed_spte(kvm, as_id, iter.gfn, iter.old_spte,
+				    new_spte, iter.level);
+
+		kvm_flush_remote_tlbs_with_address(kvm, iter.gfn, 1);
+
+		if (!pte_write(*ptep)) {
+			new_spte = kvm_mmu_changed_pte_notifier_make_spte(
+					iter.old_spte, new_pfn);
+
+			*iter.sptep = new_spte;
+			handle_changed_spte(kvm, as_id, iter.gfn, iter.old_spte,
+					    new_spte, iter.level);
+		}
+
+		need_flush = 1;
+	}
+
+	if (need_flush)
+		kvm_flush_remote_tlbs_with_address(kvm, gfn, 1);
+
+	return 0;
+}
+
+int kvm_tdp_mmu_set_spte_hva(struct kvm *kvm, unsigned long address,
+			     pte_t *host_ptep)
+{
+	return kvm_tdp_mmu_handle_hva_range(kvm, address, address + 1,
+					    (unsigned long)host_ptep,
+					    set_tdp_spte);
+}
+

@@ -80,6 +80,12 @@ bool kvm_mmu_slot_gfn_write_protect(struct kvm *kvm,
 	(PT64_BASE_ADDR_MASK & ((1ULL << (PAGE_SHIFT + (((level) - 1) \
 						* PT64_LEVEL_BITS))) - 1))
 
+#ifdef CONFIG_DYNAMIC_PHYSICAL_MASK
+#define PT64_BASE_ADDR_MASK (physical_mask & ~(u64)(PAGE_SIZE-1))
+#else
+#define PT64_BASE_ADDR_MASK (((1ULL << 52) - 1) & ~(u64)(PAGE_SIZE-1))
+#endif
+
 extern u64 shadow_user_mask;
 extern u64 shadow_accessed_mask;
 extern u64 shadow_present_mask;
@@ -88,6 +94,12 @@ extern u64 shadow_present_mask;
 #define ACC_WRITE_MASK   PT_WRITABLE_MASK
 #define ACC_USER_MASK    PT_USER_MASK
 #define ACC_ALL          (ACC_EXEC_MASK | ACC_WRITE_MASK | ACC_USER_MASK)
+
+#define PT_FIRST_AVAIL_BITS_SHIFT 10
+#define PT64_SECOND_AVAIL_BITS_SHIFT 54
+
+#define SPTE_HOST_WRITEABLE	(1ULL << PT_FIRST_AVAIL_BITS_SHIFT)
+#define SPTE_MMU_WRITEABLE	(1ULL << (PT_FIRST_AVAIL_BITS_SHIFT + 1))
 
 /* Functions for interpreting SPTEs */
 kvm_pfn_t spte_to_pfn(u64 pte);
@@ -138,5 +150,6 @@ bool is_nx_huge_page_enabled(void);
 void *mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc);
 
 u64 mark_spte_for_access_track(u64 spte);
+u64 kvm_mmu_changed_pte_notifier_make_spte(u64 old_spte, kvm_pfn_t new_pfn);
 
 #endif /* __KVM_X86_MMU_INTERNAL_H */
