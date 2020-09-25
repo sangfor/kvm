@@ -21,4 +21,8 @@ int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
 
 int kvm_tdp_mmu_zap_hva_range(struct kvm *kvm, unsigned long start,
 			      unsigned long end);
+
+int kvm_tdp_mmu_age_hva_range(struct kvm *kvm, unsigned long start,
+			      unsigned long end);
+int kvm_tdp_mmu_test_age_hva(struct kvm *kvm, unsigned long hva);
 #endif /* __KVM_X86_MMU_TDP_MMU_H */

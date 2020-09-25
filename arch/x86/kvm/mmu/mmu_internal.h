@@ -80,7 +80,9 @@ bool kvm_mmu_slot_gfn_write_protect(struct kvm *kvm,
 	(PT64_BASE_ADDR_MASK & ((1ULL << (PAGE_SHIFT + (((level) - 1) \
 						* PT64_LEVEL_BITS))) - 1))
 
+extern u64 shadow_user_mask;
 extern u64 shadow_accessed_mask;
+extern u64 shadow_present_mask;
 
 #define ACC_EXEC_MASK    1
 #define ACC_WRITE_MASK   PT_WRITABLE_MASK
@@ -95,6 +97,9 @@ int is_last_spte(u64 pte, int level);
 bool is_dirty_spte(u64 spte);
 int is_large_pte(u64 pte);
 bool is_access_track_spte(u64 spte);
+bool is_accessed_spte(u64 spte);
+bool spte_ad_enabled(u64 spte);
+bool is_executable_pte(u64 spte);
 
 void kvm_flush_remote_tlbs_with_address(struct kvm *kvm, u64 start_gfn,
 					u64 pages);
@@ -131,5 +136,7 @@ void disallowed_hugepage_adjust(u64 spte, gfn_t gfn, int cur_level,
 bool is_nx_huge_page_enabled(void);
 
 void *mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc);
+
+u64 mark_spte_for_access_track(u64 spte);
 
 #endif /* __KVM_X86_MMU_INTERNAL_H */

@@ -224,6 +224,18 @@ static int kvm_mmu_page_as_id(struct kvm_mmu_page *sp)
 	return sp->role.smm ? 1 : 0;
 }
 
+static void handle_changed_spte_acc_track(u64 old_spte, u64 new_spte, int level)
+{
+	bool pfn_changed = spte_to_pfn(old_spte) != spte_to_pfn(new_spte);
+
+	if (!is_shadow_present_pte(old_spte) || !is_last_spte(old_spte, level))
+		return;
+
+	if (is_accessed_spte(old_spte) &&
+	    (!is_accessed_spte(new_spte) || pfn_changed))
+		kvm_set_pfn_accessed(spte_to_pfn(old_spte));
+}
+
 /**
  * handle_changed_spte - handle bookkeeping associated with an SPTE change
  * @kvm: kvm instance
@@ -236,7 +248,7 @@ static int kvm_mmu_page_as_id(struct kvm_mmu_page *sp)
  * Handle bookkeeping that might result from the modification of a SPTE.
  * This function must be called for all TDP SPTE modifications.
  */
-static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
+static void __handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 				u64 old_spte, u64 new_spte, int level)
 {
 	bool was_present = is_shadow_present_pte(old_spte);
@@ -329,6 +341,13 @@ static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 		free_page((unsigned long)pt);
 		kmem_cache_free(mmu_page_header_cache, sp);
 	}
+}
+
+static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
+				u64 old_spte, u64 new_spte, int level)
+{
+	__handle_changed_spte(kvm, as_id, gfn, old_spte, new_spte, level);
+	handle_changed_spte_acc_track(old_spte, new_spte, level);
 }
 
 #define for_each_tdp_pte_root(_iter, _root, _start, _end) \
@@ -620,4 +639,86 @@ int kvm_tdp_mmu_zap_hva_range(struct kvm *kvm, unsigned long start,
 {
 	return kvm_tdp_mmu_handle_hva_range(kvm, start, end, 0,
 					    zap_gfn_range_hva_wrapper);
+}
+
+/*
+ * Mark the SPTEs range of GFNs [start, end) unaccessed and return non-zero
+ * if any of the GFNs in the range have been accessed.
+ */
+static int age_gfn_range(struct kvm *kvm, struct kvm_memory_slot *slot,
+			 struct kvm_mmu_page *root, gfn_t start, gfn_t end,
+			 unsigned long unused)
+{
+	struct tdp_iter iter;
+	int young = 0;
+	u64 new_spte = 0;
+	int as_id = kvm_mmu_page_as_id(root);
+
+	for_each_tdp_pte_root(iter, root, start, end) {
+		if (!is_shadow_present_pte(iter.old_spte) ||
+		    !is_last_spte(iter.old_spte, iter.level))
+			continue;
+
+		/*
+		 * If we have a non-accessed entry we don't need to change the
+		 * pte.
+		 */
+		if (!is_accessed_spte(iter.old_spte))
+			continue;
+
+		new_spte = iter.old_spte;
+
+		if (spte_ad_enabled(new_spte)) {
+			clear_bit((ffs(shadow_accessed_mask) - 1),
+				  (unsigned long *)&new_spte);
+		} else {
+			/*
+			 * Capture the dirty status of the page, so that it doesn't get
+			 * lost when the SPTE is marked for access tracking.
+			 */
+			if (is_writable_pte(new_spte))
+				kvm_set_pfn_dirty(spte_to_pfn(new_spte));
+
+			new_spte = mark_spte_for_access_track(new_spte);
+		}
+
+		*iter.sptep = new_spte;
+		__handle_changed_spte(kvm, as_id, iter.gfn, iter.old_spte,
+				      new_spte, iter.level);
+		young = true;
+	}
+
+	return young;
+}
+
+int kvm_tdp_mmu_age_hva_range(struct kvm *kvm, unsigned long start,
+			      unsigned long end)
+{
+	return kvm_tdp_mmu_handle_hva_range(kvm, start, end, 0,
+					    age_gfn_range);
+}
+
+static int test_age_gfn(struct kvm *kvm, struct kvm_memory_slot *slot,
+			struct kvm_mmu_page *root, gfn_t gfn, gfn_t unused,
+			unsigned long unused2)
+{
+	struct tdp_iter iter;
+	int young = 0;
+
+	for_each_tdp_pte_root(iter, root, gfn, gfn + 1) {
+		if (!is_shadow_present_pte(iter.old_spte) ||
+		    !is_last_spte(iter.old_spte, iter.level))
+			continue;
+
+		if (is_accessed_spte(iter.old_spte))
+			young = true;
+	}
+
+	return young;
+}
+
+int kvm_tdp_mmu_test_age_hva(struct kvm *kvm, unsigned long hva)
+{
+	return kvm_tdp_mmu_handle_hva_range(kvm, hva, hva + 1, 0,
+					    test_age_gfn);
 }

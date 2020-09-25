@@ -212,12 +212,12 @@ static struct percpu_counter kvm_total_used_mmu_pages;
 
 static u64 __read_mostly shadow_nx_mask;
 static u64 __read_mostly shadow_x_mask;	/* mutual exclusive with nx_mask */
-static u64 __read_mostly shadow_user_mask;
+u64 __read_mostly shadow_user_mask;
 u64 __read_mostly shadow_accessed_mask;
 static u64 __read_mostly shadow_dirty_mask;
 static u64 __read_mostly shadow_mmio_value;
 static u64 __read_mostly shadow_mmio_access_mask;
-static u64 __read_mostly shadow_present_mask;
+u64 __read_mostly shadow_present_mask;
 static u64 __read_mostly shadow_me_mask;
 
 /*
@@ -265,7 +265,6 @@ static u64 __read_mostly shadow_nonpresent_or_rsvd_lower_gfn_mask;
 static u8 __read_mostly shadow_phys_bits;
 
 static void mmu_spte_set(u64 *sptep, u64 spte);
-static bool is_executable_pte(u64 spte);
 static union kvm_mmu_page_role
 kvm_mmu_calc_root_page_role(struct kvm_vcpu *vcpu);
 
@@ -332,7 +331,7 @@ static inline bool kvm_vcpu_ad_need_write_protect(struct kvm_vcpu *vcpu)
 	return vcpu->arch.mmu == &vcpu->arch.guest_mmu;
 }
 
-static inline bool spte_ad_enabled(u64 spte)
+inline bool spte_ad_enabled(u64 spte)
 {
 	MMU_WARN_ON(is_mmio_spte(spte));
 	return (spte & SPTE_SPECIAL_MASK) != SPTE_AD_DISABLED_MASK;
@@ -607,7 +606,7 @@ int is_last_spte(u64 pte, int level)
 	return 0;
 }
 
-static bool is_executable_pte(u64 spte)
+bool is_executable_pte(u64 spte)
 {
 	return (spte & (shadow_x_mask | shadow_nx_mask)) == shadow_x_mask;
 }
@@ -791,7 +790,7 @@ static bool spte_has_volatile_bits(u64 spte)
 	return false;
 }
 
-static bool is_accessed_spte(u64 spte)
+bool is_accessed_spte(u64 spte)
 {
 	u64 accessed_mask = spte_shadow_accessed_mask(spte);
 
@@ -941,7 +940,7 @@ static u64 mmu_spte_get_lockless(u64 *sptep)
 	return __get_spte_lockless(sptep);
 }
 
-static u64 mark_spte_for_access_track(u64 spte)
+u64 mark_spte_for_access_track(u64 spte)
 {
 	if (spte_ad_enabled(spte))
 		return spte & ~shadow_accessed_mask;
@@ -1945,12 +1944,24 @@ static void rmap_recycle(struct kvm_vcpu *vcpu, u64 *spte, gfn_t gfn)
 
 int kvm_age_hva(struct kvm *kvm, unsigned long start, unsigned long end)
 {
-	return kvm_handle_hva_range(kvm, start, end, 0, kvm_age_rmapp);
+	int young = false;
+
+	young = kvm_handle_hva_range(kvm, start, end, 0, kvm_age_rmapp);
+	if (kvm->arch.tdp_mmu_enabled)
+		young |= kvm_tdp_mmu_age_hva_range(kvm, start, end);
+
+	return young;
 }
 
 int kvm_test_age_hva(struct kvm *kvm, unsigned long hva)
 {
-	return kvm_handle_hva(kvm, hva, 0, kvm_test_age_rmapp);
+	int young = false;
+
+	young = kvm_handle_hva(kvm, hva, 0, kvm_test_age_rmapp);
+	if (kvm->arch.tdp_mmu_enabled)
+		young |= kvm_tdp_mmu_test_age_hva(kvm, hva);
+
+	return young;
 }
 
 #ifdef MMU_DEBUG
