@@ -54,12 +54,12 @@
 
 extern bool itlb_multihit_kvm_mitigation;
 
-static int __read_mostly nx_huge_pages = -1;
+int __read_mostly nx_huge_pages = -1;
 #ifdef CONFIG_PREEMPT_RT
 /* Recovery can cause latency spikes, disable it for PREEMPT_RT.  */
-static uint __read_mostly nx_huge_pages_recovery_ratio = 0;
+uint __read_mostly nx_huge_pages_recovery_ratio = 0;
 #else
-static uint __read_mostly nx_huge_pages_recovery_ratio = 60;
+uint __read_mostly nx_huge_pages_recovery_ratio = 60;
 #endif
 
 static int set_nx_huge_pages(const char *val, const struct kernel_param *kp);
@@ -6455,7 +6455,7 @@ static long get_nx_lpage_recovery_timeout(u64 start_time)
 		: MAX_SCHEDULE_TIMEOUT;
 }
 
-static int kvm_nx_lpage_recovery_worker(struct kvm *kvm, uintptr_t data)
+static int kvm_nx_lpage_recovery_worker(struct kvm *kvm, uintptr_t tdp_mmu)
 {
 	u64 start_time;
 	long remaining_time;
@@ -6476,7 +6476,10 @@ static int kvm_nx_lpage_recovery_worker(struct kvm *kvm, uintptr_t data)
 		if (kthread_should_stop())
 			return 0;
 
-		kvm_recover_nx_lpages(kvm);
+		if (tdp_mmu)
+			kvm_tdp_mmu_recover_nx_lpages(kvm);
+		else
+			kvm_recover_nx_lpages(kvm);
 	}
 }
 
@@ -6489,6 +6492,17 @@ int kvm_mmu_post_init_vm(struct kvm *kvm)
 					  &kvm->arch.nx_lpage_recovery_thread);
 	if (!err)
 		kthread_unpark(kvm->arch.nx_lpage_recovery_thread);
+	else
+		return err;
+
+	if (!kvm->arch.tdp_mmu_enabled)
+		return err;
+
+	err = kvm_vm_create_worker_thread(kvm, kvm_nx_lpage_recovery_worker, 1,
+			"kvm-nx-lpage-tdp-mmu-recovery",
+			&kvm->arch.nx_lpage_tdp_mmu_recovery_thread);
+	if (!err)
+		kthread_unpark(kvm->arch.nx_lpage_tdp_mmu_recovery_thread);
 
 	return err;
 }
@@ -6497,4 +6511,7 @@ void kvm_mmu_pre_destroy_vm(struct kvm *kvm)
 {
 	if (kvm->arch.nx_lpage_recovery_thread)
 		kthread_stop(kvm->arch.nx_lpage_recovery_thread);
+
+	if (kvm->arch.nx_lpage_tdp_mmu_recovery_thread)
+		kthread_stop(kvm->arch.nx_lpage_tdp_mmu_recovery_thread);
 }

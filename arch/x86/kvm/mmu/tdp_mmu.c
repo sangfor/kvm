@@ -578,10 +578,18 @@ int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
 			new_spte = make_nonleaf_spte(child_pt,
 						     !shadow_accessed_mask);
 
+			if (iter.level <= max_level &&
+			    account_disallowed_nx_lpage) {
+				list_add(&sp->lpage_disallowed_link,
+					 &vcpu->kvm->arch.tdp_mmu_lpage_disallowed_pages);
+				vcpu->kvm->arch.tdp_mmu_lpage_disallowed_page_count++;
+			}
+
 			*iter.sptep = new_spte;
 			handle_changed_spte(vcpu->kvm, as_id, iter.gfn,
 					    iter.old_spte, new_spte,
 					    iter.level);
+			sp->parent_sptep = iter.sptep;
 		}
 	}
 
@@ -1216,5 +1224,63 @@ bool kvm_tdp_mmu_write_protect_gfn(struct kvm *kvm,
 		spte_set = write_protect_gfn(kvm, root, gfn) || spte_set;
 	}
 	return spte_set;
+}
+
+/*
+ * Clear non-leaf SPTEs and free the page tables they point to, if those SPTEs
+ * exist in order to allow execute access on a region that would otherwise be
+ * mapped as a large page.
+ */
+void kvm_tdp_mmu_recover_nx_lpages(struct kvm *kvm)
+{
+	struct kvm_mmu_page *sp;
+	bool flush;
+	int rcu_idx;
+	unsigned int ratio;
+	ulong to_zap;
+	u64 old_spte;
+
+	rcu_idx = srcu_read_lock(&kvm->srcu);
+	spin_lock(&kvm->mmu_lock);
+
+	ratio = READ_ONCE(nx_huge_pages_recovery_ratio);
+	to_zap = ratio ? DIV_ROUND_UP(kvm->stat.nx_lpage_splits, ratio) : 0;
+
+	while (to_zap &&
+	       !list_empty(&kvm->arch.tdp_mmu_lpage_disallowed_pages)) {
+		/*
+		 * We use a separate list instead of just using active_mmu_pages
+		 * because the number of lpage_disallowed pages is expected to
+		 * be relatively small compared to the total.
+		 */
+		sp = list_first_entry(&kvm->arch.tdp_mmu_lpage_disallowed_pages,
+				      struct kvm_mmu_page,
+				      lpage_disallowed_link);
+
+		old_spte = *sp->parent_sptep;
+		*sp->parent_sptep = 0;
+
+		list_del(&sp->lpage_disallowed_link);
+		kvm->arch.tdp_mmu_lpage_disallowed_page_count--;
+
+		handle_changed_spte(kvm, kvm_mmu_page_as_id(sp), sp->gfn,
+				    old_spte, 0, sp->role.level + 1);
+
+		flush = true;
+
+		if (!--to_zap || need_resched() ||
+		    spin_needbreak(&kvm->mmu_lock)) {
+			flush = false;
+			kvm_flush_remote_tlbs(kvm);
+			if (to_zap)
+				cond_resched_lock(&kvm->mmu_lock);
+		}
+	}
+
+	if (flush)
+		kvm_flush_remote_tlbs(kvm);
+
+	spin_unlock(&kvm->mmu_lock);
+	srcu_read_unlock(&kvm->srcu, rcu_idx);
 }
 

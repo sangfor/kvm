@@ -963,6 +963,7 @@ struct kvm_arch {
 
 	struct kvm_pmu_event_filter *pmu_event_filter;
 	struct task_struct *nx_lpage_recovery_thread;
+	struct task_struct *nx_lpage_tdp_mmu_recovery_thread;
 
 	/*
 	 * Whether the TDP MMU is enabled for this VM. This contains a
@@ -977,6 +978,8 @@ struct kvm_arch {
 	struct list_head tdp_mmu_roots;
 	/* List of struct tdp_mmu_pages not being used as roots */
 	struct list_head tdp_mmu_pages;
+	struct list_head tdp_mmu_lpage_disallowed_pages;
+	u64 tdp_mmu_lpage_disallowed_page_count;
 };
 
 struct kvm_vm_stat {

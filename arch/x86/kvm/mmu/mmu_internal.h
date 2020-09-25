@@ -43,6 +43,7 @@ struct kvm_mmu_page {
 	atomic_t write_flooding_count;
 
 	bool tdp_mmu_page;
+	u64 *parent_sptep;
 };
 
 extern struct kmem_cache *mmu_page_header_cache;
@@ -153,5 +154,8 @@ void *mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc);
 
 u64 mark_spte_for_access_track(u64 spte);
 u64 kvm_mmu_changed_pte_notifier_make_spte(u64 old_spte, kvm_pfn_t new_pfn);
+
+extern int nx_huge_pages;
+extern uint nx_huge_pages_recovery_ratio;
 
 #endif /* __KVM_X86_MMU_INTERNAL_H */
