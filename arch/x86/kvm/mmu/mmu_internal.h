@@ -73,6 +73,15 @@ bool kvm_mmu_slot_gfn_write_protect(struct kvm *kvm,
 	(((address) >> PT64_LEVEL_SHIFT(level)) & ((1 << PT64_LEVEL_BITS) - 1))
 #define SHADOW_PT_INDEX(addr, level) PT64_INDEX(addr, level)
 
+#define PT64_LVL_ADDR_MASK(level) \
+	(PT64_BASE_ADDR_MASK & ~((1ULL << (PAGE_SHIFT + (((level) - 1) \
+						* PT64_LEVEL_BITS))) - 1))
+#define PT64_LVL_OFFSET_MASK(level) \
+	(PT64_BASE_ADDR_MASK & ((1ULL << (PAGE_SHIFT + (((level) - 1) \
+						* PT64_LEVEL_BITS))) - 1))
+
+extern u64 shadow_accessed_mask;
+
 #define ACC_EXEC_MASK    1
 #define ACC_WRITE_MASK   PT_WRITABLE_MASK
 #define ACC_USER_MASK    PT_USER_MASK
@@ -84,7 +93,43 @@ bool is_mmio_spte(u64 spte);
 int is_shadow_present_pte(u64 pte);
 int is_last_spte(u64 pte, int level);
 bool is_dirty_spte(u64 spte);
+int is_large_pte(u64 pte);
+bool is_access_track_spte(u64 spte);
 
 void kvm_flush_remote_tlbs_with_address(struct kvm *kvm, u64 start_gfn,
 					u64 pages);
+
+/*
+ * Return values of handle_mmio_page_fault and mmu.page_fault:
+ * RET_PF_RETRY: let CPU fault again on the address.
+ * RET_PF_EMULATE: mmio page fault, emulate the instruction directly.
+ *
+ * For handle_mmio_page_fault only:
+ * RET_PF_INVALID: the spte is invalid, let the real page fault path update it.
+ */
+enum {
+	RET_PF_RETRY = 0,
+	RET_PF_EMULATE = 1,
+	RET_PF_INVALID = 2,
+};
+
+/* Bits which may be returned by set_spte() */
+#define SET_SPTE_WRITE_PROTECTED_PT	BIT(0)
+#define SET_SPTE_NEED_REMOTE_TLB_FLUSH	BIT(1)
+
+u64 make_spte(struct kvm_vcpu *vcpu, unsigned int pte_access, int level,
+	      gfn_t gfn, kvm_pfn_t pfn, u64 old_spte, bool speculative,
+	      bool can_unsync, bool host_writable, bool ad_disabled, int *ret);
+u64 make_mmio_spte(struct kvm_vcpu *vcpu, u64 gfn, unsigned int access);
+u64 make_nonleaf_spte(u64 *child_pt, bool ad_disabled);
+
+int kvm_mmu_hugepage_adjust(struct kvm_vcpu *vcpu, gfn_t gfn,
+			    int max_level, kvm_pfn_t *pfnp);
+void disallowed_hugepage_adjust(u64 spte, gfn_t gfn, int cur_level,
+				kvm_pfn_t *pfnp, int *goal_levelp);
+
+bool is_nx_huge_page_enabled(void);
+
+void *mmu_memory_cache_alloc(struct kvm_mmu_memory_cache *mc);
+
 #endif /* __KVM_X86_MMU_INTERNAL_H */

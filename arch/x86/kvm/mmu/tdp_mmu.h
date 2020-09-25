@@ -14,4 +14,8 @@ void kvm_tdp_mmu_put_root_hpa(struct kvm *kvm, hpa_t root_hpa);
 
 bool kvm_tdp_mmu_zap_gfn_range(struct kvm *kvm, gfn_t start, gfn_t end);
 void kvm_tdp_mmu_zap_all(struct kvm *kvm);
+
+int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
+			   int level, gpa_t gpa, kvm_pfn_t pfn, bool prefault,
+			   bool lpage_disallowed);
 #endif /* __KVM_X86_MMU_TDP_MMU_H */

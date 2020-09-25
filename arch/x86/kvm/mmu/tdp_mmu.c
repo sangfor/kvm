@@ -311,6 +311,10 @@ static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 #define for_each_tdp_pte_root(_iter, _root, _start, _end) \
 	for_each_tdp_pte(_iter, _root->spt, _root->role.level, _start, _end)
 
+#define for_each_tdp_pte_vcpu(_iter, _vcpu, _start, _end)		   \
+	for_each_tdp_pte(_iter, __va(_vcpu->arch.mmu->root_hpa),	   \
+			 _vcpu->arch.mmu->shadow_root_level, _start, _end)
+
 /*
  * If the MMU lock is contended or this thread needs to yield, flushes
  * the TLBs, releases, the MMU lock, yields, reacquires the MMU lock,
@@ -399,4 +403,127 @@ void kvm_tdp_mmu_zap_all(struct kvm *kvm)
 	flush = kvm_tdp_mmu_zap_gfn_range(kvm, 0, max_gfn);
 	if (flush)
 		kvm_flush_remote_tlbs(kvm);
+}
+
+/*
+ * Installs a last-level SPTE to handle a TDP page fault.
+ * (NPT/EPT violation/misconfiguration)
+ */
+static int page_fault_handle_target_level(struct kvm_vcpu *vcpu, int write,
+					  int map_writable, int as_id,
+					  struct tdp_iter *iter,
+					  kvm_pfn_t pfn, bool prefault)
+{
+	u64 new_spte;
+	int ret = 0;
+	int make_spte_ret = 0;
+
+	if (unlikely(is_noslot_pfn(pfn)))
+		new_spte = make_mmio_spte(vcpu, iter->gfn, ACC_ALL);
+	else
+		new_spte = make_spte(vcpu, ACC_ALL, iter->level, iter->gfn,
+				     pfn, iter->old_spte, prefault, true,
+				     map_writable, !shadow_accessed_mask,
+				     &make_spte_ret);
+
+	/*
+	 * If the page fault was caused by a write but the page is write
+	 * protected, emulation is needed. If the emulation was skipped,
+	 * the vCPU would have the same fault again.
+	 */
+	if ((make_spte_ret & SET_SPTE_WRITE_PROTECTED_PT) && write)
+		ret = RET_PF_EMULATE;
+
+	/* If a MMIO SPTE is installed, the MMIO will need to be emulated. */
+	if (unlikely(is_mmio_spte(new_spte)))
+		ret = RET_PF_EMULATE;
+
+	*iter->sptep = new_spte;
+	handle_changed_spte(vcpu->kvm, as_id, iter->gfn, iter->old_spte,
+			    new_spte, iter->level);
+
+	if (!prefault)
+		vcpu->stat.pf_fixed++;
+
+	return ret;
+}
+
+/*
+ * Handle a TDP page fault (NPT/EPT violation/misconfiguration) by installing
+ * page tables and SPTEs to translate the faulting guest physical address.
+ */
+int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
+			   int max_level, gpa_t gpa, kvm_pfn_t pfn,
+			   bool prefault, bool account_disallowed_nx_lpage)
+{
+	struct tdp_iter iter;
+	struct kvm_mmu_memory_cache *pf_pt_cache =
+			&vcpu->arch.mmu_shadow_page_cache;
+	u64 *child_pt;
+	u64 new_spte;
+	int ret;
+	int as_id = kvm_arch_vcpu_memslots_id(vcpu);
+	gfn_t gfn = gpa >> PAGE_SHIFT;
+	int level;
+
+	if (WARN_ON(!VALID_PAGE(vcpu->arch.mmu->root_hpa)))
+		return RET_PF_RETRY;
+
+	if (WARN_ON(!is_tdp_mmu_root(vcpu->kvm, vcpu->arch.mmu->root_hpa)))
+		return RET_PF_RETRY;
+
+	level = kvm_mmu_hugepage_adjust(vcpu, gfn, max_level, &pfn);
+
+	for_each_tdp_pte_vcpu(iter, vcpu, gfn, gfn + 1) {
+		disallowed_hugepage_adjust(iter.old_spte, gfn, iter.level,
+					   &pfn, &level);
+
+		if (iter.level == level)
+			break;
+
+		/*
+		 * If there is an SPTE mapping a large page at a higher level
+		 * than the target, that SPTE must be cleared and replaced
+		 * with a non-leaf SPTE.
+		 */
+		if (is_shadow_present_pte(iter.old_spte) &&
+		    is_large_pte(iter.old_spte)) {
+			*iter.sptep = 0;
+			handle_changed_spte(vcpu->kvm, as_id, iter.gfn,
+					    iter.old_spte, 0, iter.level);
+			kvm_flush_remote_tlbs_with_address(vcpu->kvm, iter.gfn,
+					KVM_PAGES_PER_HPAGE(iter.level));
+
+			/*
+			 * The iter must explicitly re-read the spte here
+			 * because the new is needed before the next iteration
+			 * of the loop.
+			 */
+			iter.old_spte = READ_ONCE(*iter.sptep);
+		}
+
+		if (!is_shadow_present_pte(iter.old_spte)) {
+			child_pt = kvm_mmu_memory_cache_alloc(pf_pt_cache);
+			clear_page(child_pt);
+			new_spte = make_nonleaf_spte(child_pt,
+						     !shadow_accessed_mask);
+
+			*iter.sptep = new_spte;
+			handle_changed_spte(vcpu->kvm, as_id, iter.gfn,
+					    iter.old_spte, new_spte,
+					    iter.level);
+		}
+	}
+
+	if (WARN_ON(iter.level != level))
+		return RET_PF_RETRY;
+
+	ret = page_fault_handle_target_level(vcpu, write, map_writable,
+					     as_id, &iter, pfn, prefault);
+
+	/* If emulating, flush this vcpu's TLB. */
+	if (ret == RET_PF_EMULATE)
+		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
+
+	return ret;
 }

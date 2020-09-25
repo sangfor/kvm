@@ -153,12 +153,6 @@ module_param(dbg, bool, 0644);
 #else
 #define PT64_BASE_ADDR_MASK (((1ULL << 52) - 1) & ~(u64)(PAGE_SIZE-1))
 #endif
-#define PT64_LVL_ADDR_MASK(level) \
-	(PT64_BASE_ADDR_MASK & ~((1ULL << (PAGE_SHIFT + (((level) - 1) \
-						* PT64_LEVEL_BITS))) - 1))
-#define PT64_LVL_OFFSET_MASK(level) \
-	(PT64_BASE_ADDR_MASK & ((1ULL << (PAGE_SHIFT + (((level) - 1) \
-						* PT64_LEVEL_BITS))) - 1))
 
 #define PT32_BASE_ADDR_MASK PAGE_MASK
 #define PT32_DIR_BASE_ADDR_MASK \
@@ -181,20 +175,6 @@ module_param(dbg, bool, 0644);
 
 /* make pte_list_desc fit well in cache line */
 #define PTE_LIST_EXT 3
-
-/*
- * Return values of handle_mmio_page_fault and mmu.page_fault:
- * RET_PF_RETRY: let CPU fault again on the address.
- * RET_PF_EMULATE: mmio page fault, emulate the instruction directly.
- *
- * For handle_mmio_page_fault only:
- * RET_PF_INVALID: the spte is invalid, let the real page fault path update it.
- */
-enum {
-	RET_PF_RETRY = 0,
-	RET_PF_EMULATE = 1,
-	RET_PF_INVALID = 2,
-};
 
 struct pte_list_desc {
 	u64 *sptes[PTE_LIST_EXT];
@@ -233,7 +213,7 @@ static struct percpu_counter kvm_total_used_mmu_pages;
 static u64 __read_mostly shadow_nx_mask;
 static u64 __read_mostly shadow_x_mask;	/* mutual exclusive with nx_mask */
 static u64 __read_mostly shadow_user_mask;
-static u64 __read_mostly shadow_accessed_mask;
+u64 __read_mostly shadow_accessed_mask;
 static u64 __read_mostly shadow_dirty_mask;
 static u64 __read_mostly shadow_mmio_value;
 static u64 __read_mostly shadow_mmio_access_mask;
@@ -364,7 +344,7 @@ static inline bool spte_ad_need_write_protect(u64 spte)
 	return (spte & SPTE_SPECIAL_MASK) != SPTE_AD_ENABLED_MASK;
 }
 
-static bool is_nx_huge_page_enabled(void)
+bool is_nx_huge_page_enabled(void)
 {
 	return READ_ONCE(nx_huge_pages);
 }
@@ -381,7 +361,7 @@ static inline u64 spte_shadow_dirty_mask(u64 spte)
 	return spte_ad_enabled(spte) ? shadow_dirty_mask : 0;
 }
 
-static inline bool is_access_track_spte(u64 spte)
+inline bool is_access_track_spte(u64 spte)
 {
 	return !spte_ad_enabled(spte) && (spte & shadow_acc_track_mask) == 0;
 }
@@ -433,7 +413,7 @@ static u64 get_mmio_spte_generation(u64 spte)
 	return gen;
 }
 
-static u64 make_mmio_spte(struct kvm_vcpu *vcpu, u64 gfn, unsigned int access)
+u64 make_mmio_spte(struct kvm_vcpu *vcpu, u64 gfn, unsigned int access)
 {
 
 	u64 gen = kvm_vcpu_memslots(vcpu)->generation & MMIO_SPTE_GEN_MASK;
@@ -613,7 +593,7 @@ int is_shadow_present_pte(u64 pte)
 	return (pte != 0) && !is_mmio_spte(pte);
 }
 
-static int is_large_pte(u64 pte)
+int is_large_pte(u64 pte)
 {
 	return pte & PT_PAGE_SIZE_MASK;
 }
@@ -2555,7 +2535,7 @@ static void shadow_walk_next(struct kvm_shadow_walk_iterator *iterator)
 	__shadow_walk_next(iterator, *iterator->sptep);
 }
 
-static u64 make_nonleaf_spte(u64 *child_pt, bool ad_disabled)
+u64 make_nonleaf_spte(u64 *child_pt, bool ad_disabled)
 {
 	u64 spte;
 
@@ -2961,14 +2941,9 @@ static bool kvm_is_mmio_pfn(kvm_pfn_t pfn)
 				     E820_TYPE_RAM);
 }
 
-/* Bits which may be returned by set_spte() */
-#define SET_SPTE_WRITE_PROTECTED_PT	BIT(0)
-#define SET_SPTE_NEED_REMOTE_TLB_FLUSH	BIT(1)
-
-static u64 make_spte(struct kvm_vcpu *vcpu, unsigned int pte_access, int level,
-		     gfn_t gfn, kvm_pfn_t pfn, u64 old_spte, bool speculative,
-		     bool can_unsync, bool host_writable, bool ad_disabled,
-		     int *ret)
+u64 make_spte(struct kvm_vcpu *vcpu, unsigned int pte_access, int level,
+	      gfn_t gfn, kvm_pfn_t pfn, u64 old_spte, bool speculative,
+	      bool can_unsync, bool host_writable, bool ad_disabled, int *ret)
 {
 	u64 spte = 0;
 
@@ -3249,8 +3224,8 @@ static int host_pfn_mapping_level(struct kvm_vcpu *vcpu, gfn_t gfn,
 	return level;
 }
 
-static int kvm_mmu_hugepage_adjust(struct kvm_vcpu *vcpu, gfn_t gfn,
-				   int max_level, kvm_pfn_t *pfnp)
+int kvm_mmu_hugepage_adjust(struct kvm_vcpu *vcpu, gfn_t gfn,
+			    int max_level, kvm_pfn_t *pfnp)
 {
 	struct kvm_memory_slot *slot;
 	struct kvm_lpage_info *linfo;
@@ -3295,8 +3270,8 @@ static int kvm_mmu_hugepage_adjust(struct kvm_vcpu *vcpu, gfn_t gfn,
 	return level;
 }
 
-static void disallowed_hugepage_adjust(u64 spte, gfn_t gfn, int cur_level,
-					kvm_pfn_t *pfnp, int *goal_levelp)
+void disallowed_hugepage_adjust(u64 spte, gfn_t gfn, int cur_level,
+				kvm_pfn_t *pfnp, int *goal_levelp)
 {
 	int goal_level = *goal_levelp;
 
@@ -4113,8 +4088,9 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u32 error_code,
 	if (page_fault_handle_page_track(vcpu, error_code, gfn))
 		return RET_PF_EMULATE;
 
-	if (fast_page_fault(vcpu, gpa, error_code))
-		return RET_PF_RETRY;
+	if (!is_tdp_mmu_root(vcpu->kvm, vcpu->arch.mmu->root_hpa))
+		if (fast_page_fault(vcpu, gpa, error_code))
+			return RET_PF_RETRY;
 
 	r = mmu_topup_memory_caches(vcpu, false);
 	if (r)
@@ -4139,8 +4115,14 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u32 error_code,
 	r = make_mmu_pages_available(vcpu);
 	if (r)
 		goto out_unlock;
-	r = __direct_map(vcpu, gpa, write, map_writable, max_level, pfn,
-			 prefault, is_tdp && lpage_disallowed);
+
+	if (is_tdp_mmu_root(vcpu->kvm, vcpu->arch.mmu->root_hpa))
+		r = kvm_tdp_mmu_page_fault(vcpu, write, map_writable, max_level,
+					   gpa, pfn, prefault,
+					   is_tdp && lpage_disallowed);
+	else
+		r = __direct_map(vcpu, gpa, write, map_writable, max_level, pfn,
+				 prefault, is_tdp && lpage_disallowed);
 
 out_unlock:
 	spin_unlock(&vcpu->kvm->mmu_lock);
