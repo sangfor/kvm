@@ -1284,3 +1284,20 @@ void kvm_tdp_mmu_recover_nx_lpages(struct kvm *kvm)
 	srcu_read_unlock(&kvm->srcu, rcu_idx);
 }
 
+/*
+ * Return the level of the lowest level SPTE added to sptes.
+ * That SPTE may be non-present.
+ */
+int kvm_tdp_mmu_get_walk(struct kvm_vcpu *vcpu, u64 addr, u64 *sptes)
+{
+	struct tdp_iter iter;
+	int leaf = vcpu->arch.mmu->shadow_root_level;
+	gfn_t gfn = addr >> PAGE_SHIFT;
+
+	for_each_tdp_pte_vcpu(iter, vcpu, gfn, gfn + 1) {
+		leaf = iter.level;
+		sptes[leaf - 1] = iter.old_spte;
+	}
+
+	return leaf;
+}
