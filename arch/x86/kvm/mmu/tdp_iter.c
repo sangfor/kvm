@@ -161,3 +161,20 @@ void tdp_iter_next(struct tdp_iter *iter)
 		done = try_step_side(iter);
 	}
 }
+
+/*
+ * Restart the walk over the paging structure from the root, starting from the
+ * highest gfn the iterator had previously reached. Assumes that the entire
+ * paging structure, except the root page, may have been completely torn down
+ * and rebuilt.
+ */
+void tdp_iter_refresh_walk(struct tdp_iter *iter)
+{
+	gfn_t goal_gfn = iter->goal_gfn;
+
+	if (iter->gfn > goal_gfn)
+		goal_gfn = iter->gfn;
+
+	tdp_iter_start(iter, iter->pt_path[iter->root_level - 1],
+		       iter->root_level, goal_gfn);
+}

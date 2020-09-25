@@ -49,5 +49,6 @@ u64 *spte_to_child_pt(u64 pte, int level);
 void tdp_iter_start(struct tdp_iter *iter, u64 *root_pt, int root_level,
 		    gfn_t goal_gfn);
 void tdp_iter_next(struct tdp_iter *iter);
+void tdp_iter_refresh_walk(struct tdp_iter *iter);
 
 #endif /* __KVM_X86_MMU_TDP_ITER_H */
