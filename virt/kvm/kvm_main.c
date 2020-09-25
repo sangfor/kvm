@@ -1318,6 +1318,7 @@ int __kvm_set_memory_region(struct kvm *kvm,
 	new.npages = mem->memory_size >> PAGE_SHIFT;
 	new.flags = mem->flags;
 	new.userspace_addr = mem->userspace_addr;
+	new.as_id = as_id;
 
 	if (new.npages > KVM_MEM_MAX_NR_PAGES)
 		return -EINVAL;

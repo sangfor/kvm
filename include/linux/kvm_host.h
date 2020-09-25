@@ -345,6 +345,7 @@ struct kvm_memory_slot {
 	struct kvm_arch_memory_slot arch;
 	unsigned long userspace_addr;
 	u32 flags;
+	int as_id;
 	short id;
 };
 
