@@ -30,6 +30,7 @@ void kvm_mmu_init_tdp_mmu(struct kvm *kvm)
 	kvm->arch.tdp_mmu_enabled = true;
 
 	INIT_LIST_HEAD(&kvm->arch.tdp_mmu_roots);
+	INIT_LIST_HEAD(&kvm->arch.tdp_mmu_pages);
 }
 
 void kvm_mmu_uninit_tdp_mmu(struct kvm *kvm)
@@ -244,6 +245,7 @@ static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 	bool is_leaf = is_present && is_last_spte(new_spte, level);
 	bool pfn_changed = spte_to_pfn(old_spte) != spte_to_pfn(new_spte);
 	u64 *pt;
+	struct kvm_mmu_page *sp;
 	u64 old_child_spte;
 	int i;
 
@@ -309,6 +311,9 @@ static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 	 */
 	if (was_present && !was_leaf && (pfn_changed || !is_present)) {
 		pt = spte_to_child_pt(old_spte, level);
+		sp = sptep_to_sp(pt);
+
+		list_del(&sp->link);
 
 		for (i = 0; i < PT64_ENT_PER_PAGE; i++) {
 			old_child_spte = *(pt + i);
@@ -322,6 +327,7 @@ static void handle_changed_spte(struct kvm *kvm, int as_id, gfn_t gfn,
 						   KVM_PAGES_PER_HPAGE(level));
 
 		free_page((unsigned long)pt);
+		kmem_cache_free(mmu_page_header_cache, sp);
 	}
 }
 
@@ -474,8 +480,7 @@ int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
 			   bool prefault, bool account_disallowed_nx_lpage)
 {
 	struct tdp_iter iter;
-	struct kvm_mmu_memory_cache *pf_pt_cache =
-			&vcpu->arch.mmu_shadow_page_cache;
+	struct kvm_mmu_page *sp;
 	u64 *child_pt;
 	u64 new_spte;
 	int ret;
@@ -520,7 +525,9 @@ int kvm_tdp_mmu_page_fault(struct kvm_vcpu *vcpu, int write, int map_writable,
 		}
 
 		if (!is_shadow_present_pte(iter.old_spte)) {
-			child_pt = kvm_mmu_memory_cache_alloc(pf_pt_cache);
+			sp = alloc_tdp_mmu_page(vcpu, iter.gfn, iter.level);
+			list_add(&sp->link, &vcpu->kvm->arch.tdp_mmu_pages);
+			child_pt = sp->spt;
 			clear_page(child_pt);
 			new_spte = make_nonleaf_spte(child_pt,
 						     !shadow_accessed_mask);
