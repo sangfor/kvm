@@ -1161,3 +1161,60 @@ void kvm_tdp_mmu_zap_collapsible_sptes(struct kvm *kvm,
 		put_tdp_mmu_root(kvm, root);
 	}
 }
+
+/*
+ * Removes write access on the last level SPTE mapping this GFN and unsets the
+ * SPTE_MMU_WRITABLE bit to ensure future writes continue to be intercepted.
+ * Returns true if an SPTE was set and a TLB flush is needed.
+ */
+static bool write_protect_gfn(struct kvm *kvm, struct kvm_mmu_page *root,
+			      gfn_t gfn)
+{
+	struct tdp_iter iter;
+	u64 new_spte;
+	bool spte_set = false;
+	int as_id = kvm_mmu_page_as_id(root);
+
+	for_each_tdp_pte_root(iter, root, gfn, gfn + 1) {
+		if (!is_shadow_present_pte(iter.old_spte) ||
+		    !is_last_spte(iter.old_spte, iter.level))
+			continue;
+
+		if (!is_writable_pte(iter.old_spte))
+			break;
+
+		new_spte = iter.old_spte &
+			~(PT_WRITABLE_MASK | SPTE_MMU_WRITEABLE);
+
+		*iter.sptep = new_spte;
+		handle_changed_spte(kvm, as_id, iter.gfn, iter.old_spte,
+				    new_spte, iter.level);
+		spte_set = true;
+	}
+
+	return spte_set;
+}
+
+/*
+ * Removes write access on the last level SPTE mapping this GFN and unsets the
+ * SPTE_MMU_WRITABLE bit to ensure future writes continue to be intercepted.
+ * Returns true if an SPTE was set and a TLB flush is needed.
+ */
+bool kvm_tdp_mmu_write_protect_gfn(struct kvm *kvm,
+				   struct kvm_memory_slot *slot, gfn_t gfn)
+{
+	struct kvm_mmu_page *root;
+	int root_as_id;
+	bool spte_set = false;
+
+	lockdep_assert_held(&kvm->mmu_lock);
+	for_each_tdp_mmu_root(kvm, root) {
+		root_as_id = kvm_mmu_page_as_id(root);
+		if (root_as_id != slot->as_id)
+			continue;
+
+		spte_set = write_protect_gfn(kvm, root, gfn) || spte_set;
+	}
+	return spte_set;
+}
+
