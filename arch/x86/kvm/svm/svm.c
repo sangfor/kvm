@@ -1230,7 +1230,7 @@ static void init_vmcb(struct vcpu_svm *svm)
 		save->cr3 = 0;
 		save->cr4 = 0;
 	}
-	svm->asid_generation = 0;
+	svm->current_vmcb->asid_generation = 0;
 	svm->asid = 0;
 
 	svm->nested.vmcb12_gpa = 0;
@@ -1313,13 +1313,6 @@ void svm_switch_vmcb(struct vcpu_svm *svm, struct kvm_vmcb_info *target_vmcb)
 	svm->vmcb_pa = target_vmcb->pa;
 
 	/*
-	* Workaround: we don't yet track the ASID generation
-	* that was active the last time target_vmcb was run.
-	*/
-
-	svm->asid_generation = 0;
-
-	/*
 	* Track the physical CPU the target_vmcb is running on
 	* in order to mark the VMCB dirty if the cpu changes at
 	* its next vmrun.
@@ -1385,7 +1378,6 @@ static int svm_create_vcpu(struct kvm_vcpu *vcpu)
 	if (vmsa_page)
 		svm->vmsa = page_address(vmsa_page);
 
-	svm->asid_generation = 0;
 	svm->guest_state_loaded = false;
 
 	svm_switch_vmcb(svm, &svm->vmcb01);
@@ -1867,7 +1859,7 @@ static void new_asid(struct vcpu_svm *svm, struct svm_cpu_data *sd)
 		vmcb_mark_dirty(svm->vmcb, VMCB_ASID);
 	}
 
-	svm->asid_generation = sd->asid_generation;
+	svm->current_vmcb->asid_generation = sd->asid_generation;
 	svm->asid = sd->next_asid++;
 }
 
@@ -3430,10 +3422,11 @@ static void pre_svm_run(struct vcpu_svm *svm)
 	/*
 	 * If the previous vmrun of the vmcb occurred on
 	 * a different physical cpu then we must mark the vmcb dirty.
-	 */
+	 * and assign a new asid.
+	*/
 
         if (unlikely(svm->current_vmcb->cpu != svm->vcpu.cpu)) {
-		svm->asid_generation = 0;
+		svm->current_vmcb->asid_generation = 0;
 		vmcb_mark_all_dirty(svm->vmcb);
 		svm->current_vmcb->cpu = svm->vcpu.cpu;
         }
@@ -3442,7 +3435,7 @@ static void pre_svm_run(struct vcpu_svm *svm)
 		return pre_sev_run(svm, svm->vcpu.cpu);
 
 	/* FIXME: handle wraparound of asid_generation */
-	if (svm->asid_generation != sd->asid_generation)
+	if (svm->current_vmcb->asid_generation != sd->asid_generation)
 		new_asid(svm, sd);
 }
 
@@ -3666,7 +3659,7 @@ void svm_flush_tlb(struct kvm_vcpu *vcpu)
 	if (static_cpu_has(X86_FEATURE_FLUSHBYASID))
 		svm->vmcb->control.tlb_ctl = TLB_CONTROL_FLUSH_ASID;
 	else
-		svm->asid_generation--;
+		svm->current_vmcb->asid_generation--;
 }
 
 static void svm_flush_tlb_gva(struct kvm_vcpu *vcpu, gva_t gva)
