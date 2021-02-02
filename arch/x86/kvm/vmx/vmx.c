@@ -2036,6 +2036,9 @@ static u64 vcpu_supported_debugctl(struct kvm_vcpu *vcpu)
 	if (!intel_pmu_lbr_is_enabled(vcpu))
 		debugctl &= ~DEBUGCTLMSR_LBR_MASK;
 
+	if (!guest_cpuid_has(vcpu, X86_FEATURE_BUS_LOCK_DETECT))
+		debugctl &= ~DEBUGCTLMSR_BUS_LOCK_DETECT;
+
 	return debugctl;
 }
 
@@ -2091,6 +2094,7 @@ static int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		break;
 	case MSR_IA32_DEBUGCTLMSR: {
 		u64 invalid = data & ~vcpu_supported_debugctl(vcpu);
+
 		if (invalid & (DEBUGCTLMSR_BTF|DEBUGCTLMSR_LBR)) {
 			if (report_ignored_msrs)
 				vcpu_unimpl(vcpu, "%s: BTF|LBR in IA32_DEBUGCTLMSR 0x%llx, nop\n",
