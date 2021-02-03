@@ -54,6 +54,7 @@
 #define MSR_KVM_POLL_CONTROL	0x4b564d05
 #define MSR_KVM_ASYNC_PF_INT	0x4b564d06
 #define MSR_KVM_ASYNC_PF_ACK	0x4b564d07
+#define MSR_KVM_GUEST_SSP	0x4b564d08
 
 struct kvm_steal_time {
 	__u64 steal;
