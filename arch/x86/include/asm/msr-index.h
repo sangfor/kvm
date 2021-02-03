@@ -937,6 +937,8 @@
 #define MSR_IA32_U_CET		0x6a0 /* user mode cet setting */
 #define MSR_IA32_S_CET		0x6a2 /* kernel mode cet setting */
 #define MSR_IA32_PL0_SSP	0x6a4 /* kernel shstk pointer */
+#define MSR_IA32_PL1_SSP	0x6a5 /* ring-1 shstk pointer */
+#define MSR_IA32_PL2_SSP	0x6a6 /* ring-2 shstk pointer */
 #define MSR_IA32_PL3_SSP	0x6a7 /* user shstk pointer */
 #define MSR_IA32_INT_SSP_TAB	0x6a8 /* exception shstk table */
 
