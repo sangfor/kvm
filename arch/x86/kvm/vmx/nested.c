@@ -539,6 +539,17 @@ static void nested_vmx_disable_intercept_for_msr(unsigned long *msr_bitmap_l1,
 	}
 }
 
+static void nested_vmx_cond_disable_intercept_for_msr(struct kvm_vcpu *vcpu, u32 msr,
+						      unsigned long *bitmap_12,
+						      unsigned long *bitmap_02,
+						      int type)
+{
+	if (msr_write_intercepted_l01(vcpu, msr))
+		return;
+
+	nested_vmx_disable_intercept_for_msr(bitmap_12, bitmap_02, msr, type);
+}
+
 static inline void enable_x2apic_msr_intercepts(unsigned long *msr_bitmap)
 {
 	int msr;
@@ -635,17 +646,13 @@ static inline bool nested_vmx_prepare_msr_bitmap(struct kvm_vcpu *vcpu,
 	 *    updated to reflect this when L1 (or its L2s) actually write to
 	 *    the MSR.
 	 */
-	if (!msr_write_intercepted_l01(vcpu, MSR_IA32_SPEC_CTRL))
-		nested_vmx_disable_intercept_for_msr(
-					msr_bitmap_l1, msr_bitmap_l0,
-					MSR_IA32_SPEC_CTRL,
-					MSR_TYPE_R | MSR_TYPE_W);
+	nested_vmx_cond_disable_intercept_for_msr(vcpu, MSR_IA32_SPEC_CTRL,
+						  msr_bitmap_l1, msr_bitmap_l0,
+						  MSR_TYPE_R | MSR_TYPE_W);
 
-	if (!msr_write_intercepted_l01(vcpu, MSR_IA32_PRED_CMD))
-		nested_vmx_disable_intercept_for_msr(
-					msr_bitmap_l1, msr_bitmap_l0,
-					MSR_IA32_PRED_CMD,
-					MSR_TYPE_W);
+	nested_vmx_cond_disable_intercept_for_msr(vcpu, MSR_IA32_PRED_CMD,
+						  msr_bitmap_l1, msr_bitmap_l0,
+						  MSR_TYPE_W);
 
 	kvm_vcpu_unmap(vcpu, &to_vmx(vcpu)->nested.msr_bitmap_map, false);
 
