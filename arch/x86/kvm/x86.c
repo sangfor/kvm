@@ -8692,6 +8692,16 @@ static void enter_smm_save_state_64(struct kvm_vcpu *vcpu, char *buf)
 
 	for (i = 0; i < 6; i++)
 		enter_smm_save_seg_64(vcpu, buf, i);
+
+	if (kvm_cet_supported()) {
+		struct msr_data msr;
+
+		msr.index = MSR_KVM_GUEST_SSP;
+		msr.host_initiated = true;
+		/* GUEST_SSP is stored in VMCS at vm-exit. */
+		kvm_x86_ops.get_msr(vcpu, &msr);
+		put_smstate(u64, buf, 0x7f08, msr.data);
+	}
 }
 #endif
 
