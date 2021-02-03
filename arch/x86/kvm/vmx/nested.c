@@ -2781,7 +2781,7 @@ static int nested_check_vm_entry_controls(struct kvm_vcpu *vcpu,
 		/* VM-entry interruption-info field: deliver error code */
 		should_have_error_code =
 			intr_type == INTR_TYPE_HARD_EXCEPTION && prot_mode &&
-			x86_exception_has_error_code(vector);
+			x86_exception_has_error_code(vcpu, vector);
 		if (CC(has_error_code != should_have_error_code))
 			return -EINVAL;
 

@@ -120,13 +120,20 @@ static inline bool is_la57_mode(struct kvm_vcpu *vcpu)
 #endif
 }
 
-static inline bool x86_exception_has_error_code(unsigned int vector)
+static inline bool x86_exception_has_error_code(struct kvm_vcpu *vcpu,
+						unsigned int vector)
 {
 	static u32 exception_has_error_code = BIT(DF_VECTOR) | BIT(TS_VECTOR) |
 			BIT(NP_VECTOR) | BIT(SS_VECTOR) | BIT(GP_VECTOR) |
-			BIT(PF_VECTOR) | BIT(AC_VECTOR);
+			BIT(PF_VECTOR) | BIT(AC_VECTOR) | BIT(CP_VECTOR);
 
-	return (1U << vector) & exception_has_error_code;
+	if (!((1U << vector) & exception_has_error_code))
+		return false;
+
+	if (vector == CP_VECTOR)
+		return !(vcpu->arch.cr4_guest_rsvd_bits & X86_CR4_CET);
+
+	return true;
 }
 
 static inline bool mmu_is_nested(struct kvm_vcpu *vcpu)

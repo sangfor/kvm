@@ -438,11 +438,15 @@ EXPORT_SYMBOL_GPL(kvm_spurious_fault);
 #define EXCPT_CONTRIBUTORY	1
 #define EXCPT_PF		2
 
-static int exception_class(int vector)
+static int exception_class(struct kvm_vcpu *vcpu, int vector)
 {
 	switch (vector) {
 	case PF_VECTOR:
 		return EXCPT_PF;
+	case CP_VECTOR:
+		if (vcpu->arch.cr4_guest_rsvd_bits & X86_CR4_CET)
+			return EXCPT_BENIGN;
+		return EXCPT_CONTRIBUTORY;
 	case DE_VECTOR:
 	case TS_VECTOR:
 	case NP_VECTOR:
@@ -588,8 +592,8 @@ static void kvm_multiple_exception(struct kvm_vcpu *vcpu,
 		kvm_make_request(KVM_REQ_TRIPLE_FAULT, vcpu);
 		return;
 	}
-	class1 = exception_class(prev_nr);
-	class2 = exception_class(nr);
+	class1 = exception_class(vcpu, prev_nr);
+	class2 = exception_class(vcpu, nr);
 	if ((class1 == EXCPT_CONTRIBUTORY && class2 == EXCPT_CONTRIBUTORY)
 		|| (class1 == EXCPT_PF && class2 != EXCPT_BENIGN)) {
 		/*
