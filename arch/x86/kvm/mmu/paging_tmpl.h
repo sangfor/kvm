@@ -1050,7 +1050,7 @@ static int FNAME(sync_page)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 	int i, nr_present = 0;
 	bool host_writable;
 	gpa_t first_pte_gpa;
-	int set_spte_ret = 0;
+	bool flush = false;
 
 	/*
 	 * Ignore various flags when verifying that it's safe to sync a shadow
@@ -1080,6 +1080,7 @@ static int FNAME(sync_page)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 	first_pte_gpa = FNAME(get_level1_sp_gpa)(sp);
 
 	for (i = 0; i < PT64_ENT_PER_PAGE; i++) {
+		u64 *sptep, spte;
 		unsigned pte_access;
 		pt_element_t gpte;
 		gpa_t pte_gpa;
@@ -1127,15 +1128,17 @@ static int FNAME(sync_page)(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp)
 
 		nr_present++;
 
-		host_writable = sp->spt[i] & shadow_host_writable_mask;
+		sptep = &sp->spt[i];
+		spte = *sptep;
+		host_writable = spte & shadow_host_writable_mask;
+		make_spte(vcpu, pte_access, PG_LEVEL_4K, gfn,
+			  spte_to_pfn(spte), spte, true, false,
+			  host_writable, sp_ad_disabled(sp), &spte);
 
-		set_spte_ret |= set_spte(vcpu, &sp->spt[i],
-					 pte_access, PG_LEVEL_4K,
-					 gfn, spte_to_pfn(sp->spt[i]),
-					 true, false, host_writable);
+		flush |= mmu_spte_update(sptep, spte);
 	}
 
-	if (set_spte_ret & SET_SPTE_NEED_REMOTE_TLB_FLUSH)
+	if (flush)
 		kvm_flush_remote_tlbs(vcpu->kvm);
 
 	return nr_present;
