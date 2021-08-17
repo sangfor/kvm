@@ -932,6 +932,7 @@ void kvm_tdp_mmu_invalidate_all_roots(struct kvm *kvm)
  */
 static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
 					  struct kvm_page_fault *fault,
+					  struct kvm_mmu_page *sp,
 					  struct tdp_iter *iter)
 {
 	u64 new_spte;
@@ -941,10 +942,9 @@ static int tdp_mmu_map_handle_target_level(struct kvm_vcpu *vcpu,
 	if (unlikely(is_noslot_pfn(fault->pfn)))
 		new_spte = make_mmio_spte(vcpu, iter->gfn, ACC_ALL);
 	else
-		wrprot = make_spte(vcpu, ACC_ALL, iter->level, iter->gfn,
+		wrprot = make_spte(vcpu, sp, ACC_ALL, iter->gfn,
 					 fault->pfn, iter->old_spte, fault->prefault, true,
-					 fault->map_writable, !shadow_accessed_mask,
-					 &new_spte);
+					 fault->map_writable, &new_spte);
 
 	if (new_spte == iter->old_spte)
 		ret = RET_PF_SPURIOUS;
@@ -1059,7 +1059,7 @@ int kvm_tdp_mmu_map(struct kvm_vcpu *vcpu, struct kvm_page_fault *fault)
 		return RET_PF_RETRY;
 	}
 
-	ret = tdp_mmu_map_handle_target_level(vcpu, fault, &iter);
+	ret = tdp_mmu_map_handle_target_level(vcpu, fault, sp, &iter);
 	rcu_read_unlock();
 
 	return ret;

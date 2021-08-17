@@ -2724,8 +2724,8 @@ static int mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep,
 			was_rmapped = 1;
 	}
 
-	wrprot = make_spte(vcpu, pte_access, level, gfn, pfn, *sptep, speculative,
-			   true, host_writable, sp_ad_disabled(sp), &spte);
+	wrprot = make_spte(vcpu, sp, pte_access, gfn, pfn, *sptep, speculative,
+			   true, host_writable, &spte);
 
 	if (spte & PT_WRITABLE_MASK)
 		kvm_vcpu_mark_page_dirty(vcpu, gfn);
