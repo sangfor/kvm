@@ -92,10 +92,11 @@ static bool kvm_is_mmio_pfn(kvm_pfn_t pfn)
 bool make_spte(struct kvm_vcpu *vcpu, struct kvm_mmu_page *sp,
                struct kvm_memory_slot *slot,
 	       unsigned int pte_access, gfn_t gfn, kvm_pfn_t pfn,
-	       u64 old_spte, bool speculative, bool can_unsync,
-	       bool host_writable, u64 *new_spte)
+	       bool speculative, bool can_unsync,
+	       bool host_writable, u64 *sptep)
 {
 	int level = sp->role.level;
+	u64 old_spte = *sptep;
 	u64 spte = SPTE_MMU_PRESENT_MASK;
 	bool wrprot = false;
 
@@ -181,7 +182,7 @@ out:
 		  "spte = 0x%llx, level = %d, rsvd bits = 0x%llx", spte, level,
 		  get_rsvd_bits(&vcpu->arch.mmu->shadow_zero_check, spte, level));
 
-	*new_spte = spte;
+	*sptep = spte;
 	return wrprot;
 }
 
