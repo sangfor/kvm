@@ -1492,15 +1492,23 @@ static void kvm_replace_memslot(struct kvm *kvm,
 	}
 }
 
+bool __weak kvm_arch_dirty_log_supported(struct kvm *kvm)
+{
+	return true;
+}
+
 bool __weak kvm_arch_private_memory_supported(struct kvm *kvm)
 {
 	return false;
 }
 
 static int check_memory_region_flags(struct kvm *kvm,
-				const struct kvm_userspace_memory_region *mem)
+				     const struct kvm_userspace_memory_region *mem)
 {
-	u32 valid_flags = KVM_MEM_LOG_DIRTY_PAGES;
+	u32 valid_flags = 0;
+
+	if (kvm_arch_dirty_log_supported(kvm))
+		valid_flags |= KVM_MEM_LOG_DIRTY_PAGES;
 
 	if (kvm_arch_private_memory_supported(kvm))
 		valid_flags |= KVM_MEM_PRIVATE;
