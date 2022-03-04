@@ -17,7 +17,7 @@
  * SEAMCALL - used by TDX hosts to make requests to the
  *            TDX module.
  */
-.macro TDX_MODULE_CALL host:req
+.macro TDX_MODULE_CALL host:req error_check=1
 	/*
 	 * R12 will be used as temporary storage for struct tdx_module_output
 	 * pointer. Since R12-R15 registers are not used by TDCALL/SEAMCALL
@@ -57,8 +57,10 @@
 	 * This value will never be used as actual SEAMCALL error code as
 	 * it is from the Reserved status code class.
 	 */
+	.if \error_check
 	jnc .Lno_vmfailinvalid
 	mov $TDX_SEAMCALL_VMFAILINVALID, %rax
+	.endif
 .Lno_vmfailinvalid:
 
 	.else
