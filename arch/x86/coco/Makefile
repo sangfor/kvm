@@ -4,3 +4,5 @@ KASAN_SANITIZE_core.o	:= n
 CFLAGS_core.o		+= -fno-stack-protector
 
 obj-y += core.o
+obj-$(INTEL_TDX_GUEST) += tdx/
+obj-$(INTEL_TDX_HOST) += tdx/
