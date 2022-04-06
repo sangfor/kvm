@@ -765,8 +765,24 @@ void stop_this_cpu(void *dummy)
 	 * without the encryption bit, they don't race each other when flushed
 	 * and potentially end up with the wrong entry being committed to
 	 * memory.
+	 *
+	 * Test the CPUID bit directly because the machine might've cleared
+	 * X86_FEATURE_SME due to cmdline options.
+	 *
+	 * In case of kexec, similar to SME, if TDX is ever enabled, the
+	 * cachelines of TDX private memory (including PAMTs) used by TDX
+	 * module need to be flushed before transiting to the new kernel,
+	 * otherwise they may silently corrupt the new kernel.
+	 *
+	 * Note TDX is enabled on demand at runtime, and enabling TDX has a
+	 * state machine protected with a mutex to prevent concurrent calls
+	 * from multiple callers.  Holding the mutex is required to get the
+	 * TDX enabling status, but this function runs in interrupt context.
+	 * So to make it simple, always flush cache when platform supports
+	 * TDX (detected at boot time), regardless whether TDX is truly
+	 * enabled by kernel.
 	 */
-	if (boot_cpu_has(X86_FEATURE_SME))
+	if ((cpuid_eax(0x8000001f) & BIT(0)) || platform_has_tdx())
 		native_wbinvd();
 	for (;;) {
 		/*
