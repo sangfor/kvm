@@ -367,8 +367,9 @@ static bool arch_lbr_depth_is_valid(struct kvm_vcpu *vcpu, u64 depth)
 {
 	struct kvm_pmu *pmu = vcpu_to_pmu(vcpu);
 
-	if (!kvm_cpu_cap_has(X86_FEATURE_ARCH_LBR))
-		return false;
+	if (!kvm_cpu_cap_has(X86_FEATURE_ARCH_LBR) ||
+	    !guest_cpuid_has(vcpu, X86_FEATURE_ARCH_LBR))
+		return depth == 0;
 
 	return (depth == pmu->kvm_arch_lbr_depth);
 }
@@ -378,7 +379,7 @@ static bool arch_lbr_ctl_is_valid(struct kvm_vcpu *vcpu, u64 ctl)
 	struct kvm_cpuid_entry2 *entry;
 
 	if (!kvm_cpu_cap_has(X86_FEATURE_ARCH_LBR))
-		return false;
+		return ctl == 0;
 
 	if (ctl & ~KVM_ARCH_LBR_CTL_MASK)
 		goto warn;
@@ -510,6 +511,8 @@ static int intel_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 		}
 		break;
 	case MSR_IA32_DS_AREA:
+		if (msr_info->host_initiated && data && !guest_cpuid_has(vcpu, X86_FEATURE_DS))
+			return 1;
 		if (is_noncanonical_address(data, vcpu))
 			return 1;
 		pmu->ds_area = data;
@@ -525,7 +528,11 @@ static int intel_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_ARCH_LBR_DEPTH:
 		if (!arch_lbr_depth_is_valid(vcpu, data))
 			return 1;
+
 		lbr_desc->records.nr = data;
+		if (!guest_cpuid_has(vcpu, X86_FEATURE_ARCH_LBR))
+			return 0;
+
 		/*
 		 * Writing depth MSR from guest could either setting the
 		 * MSR or resetting the LBR records with the side-effect.
@@ -535,6 +542,8 @@ static int intel_pmu_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 	case MSR_ARCH_LBR_CTL:
 		if (!arch_lbr_ctl_is_valid(vcpu, data))
 			break;
+		if (!guest_cpuid_has(vcpu, X86_FEATURE_ARCH_LBR))
+			return 0;
 
 		vmcs_write64(GUEST_IA32_LBR_CTL, data);
 
